@@ -18,9 +18,11 @@
 #include "TextPanel.hpp"
 #include "core/Book.hpp"
 #include "core/Jobs.hpp"
+#include "core/Recent.hpp"
 #include "core/Undo.hpp"
 #include "widgets/Widgets.hpp"
 
+#include <giomm/menu.h>
 #include <giomm/simpleaction.h>
 #include <glibmm/dispatcher.h>
 #include <gtkmm/applicationwindow.h>
@@ -40,6 +42,7 @@ public:
     ~Shell() override;
 
     void open_path(const std::string& path);                 // files: book or scans folder
+    void reopen_last();                                      // files: a plain start (s25)
 
 private:
     // -- zones (Shell.cpp)
@@ -65,6 +68,9 @@ private:
     void new_from_scans(const std::string& folder);          // files
     void open_book(const std::string& folder);               // files
     bool save();                                             // files
+    void on_save_as();                                       // handler: Save As (s25)
+    void refresh_recent_menu();                              // helper: the Recent submenu
+    void on_about();                                         // handler: About
     void on_export();                                        // handler: Export
     void build_settings_popover();                           // zone: book settings
     void sync_settings_popover();                            // helper
@@ -93,6 +99,9 @@ private:
     bool          m_has_book = false;
     core::Journal m_journal;
     core::Jobs    m_jobs;
+    core::Recent  m_recent;                                  // the app's memory, not the book's
+    Glib::RefPtr<Gio::Menu> m_recent_menu;
+    std::unique_ptr<Gtk::Window> m_about;                   // made once, hidden on close
     Glib::Dispatcher m_dispatch;
 
     std::string m_page_id;

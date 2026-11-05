@@ -17,6 +17,7 @@
 
 #include <cairomm/surface.h>
 #include <gtkmm/gestureclick.h>
+#include <gtkmm/eventcontrollerscroll.h>
 #include <gtkmm/gesturedrag.h>
 #include <sigc++/signal.h>
 
@@ -37,6 +38,9 @@ const ocr::Word* word_at(const core::Page& page, const WordRef& r);
 class PageView : public widgets::DrawingArea {
 public:
     enum class Tool { Select, Draw };
+    // How the page fits: the whole page, the page's width (scroll down it), or
+    // a free scale the author zoomed to. Kept across pages; the pan resets.
+    enum class Fit { Page, Width, Free };
 
     PageView();
 
@@ -47,6 +51,11 @@ public:
     void set_area(int area);
     void set_tool(Tool t);
     Tool tool() const { return m_tool; }
+
+    void   set_fit(Fit f);
+    void   zoom_by(double factor);              // about the view's centre
+    double zoom() const;                         // view px per page px, now
+    sigc::signal<void()> signal_zoom_changed;
 
     sigc::signal<void(WordRef)>          signal_word_clicked;
     sigc::signal<void(int)>              signal_area_selected;   // -1 = none
@@ -59,6 +68,8 @@ private:
     void on_drag_begin(double x, double y);
     void on_drag_update(double dx, double dy);
     void on_drag_end(double dx, double dy);
+    bool on_scroll(double dx, double dy);
+    void zoom_at(double factor, double x, double y);
 
     // view <-> page space
     bool   layout(double& s, double& ox, double& oy) const;
@@ -77,6 +88,14 @@ private:
 
     Glib::RefPtr<Gtk::GestureClick> m_click;
     Glib::RefPtr<Gtk::GestureDrag>  m_drag;
+    Glib::RefPtr<Gtk::GestureDrag>  m_pan;      // middle button
+    Fit    m_fit = Fit::Page;
+    double m_scale = 1.0;                       // for Fit::Free
+    mutable double m_pan_x = 0, m_pan_y = 0;    // view px scrolled, clamped in layout()
+    double m_pan_x0 = 0, m_pan_y0 = 0;
+    Glib::RefPtr<Gtk::EventController> m_scroll;
+    double m_px = 0, m_py = 0;
+    bool   m_pointer_in = false;
     // A drag in progress: drawing a new area, or which edges of the selected
     // area it moves (bit 1 left, 2 right, 4 top, 8 bottom).
     bool   m_dragging = false;

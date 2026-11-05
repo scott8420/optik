@@ -56,6 +56,9 @@ struct Settings {
     bool mark_running_heads = true;  // read: running heads / folios -> header / footer
     bool join_pages         = true;  // export: a paragraph runs on over the page turn
     bool dehyphenate        = true;  // export: "exam-\nple" -> "example"
+    bool mark_headings      = true;  // read: a short centred block with space below -> Heading
+    bool mend_quotes        = true;  // read: ``Stop'' / ""Stop"" -> one typographic quote
+    bool small_caps         = true;  // read: caps headings upper-cased, chapter openers doubted
     bool operator==(const Settings&) const = default;
 };
 

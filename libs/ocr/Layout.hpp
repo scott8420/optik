@@ -40,6 +40,9 @@ struct Word {
     float       conf = 0.0f;       // the engine's confidence, 0..100
     bool        checked = false;   // a person looked at it and said yes
     bool        edited  = false;   // a person changed the text
+    bool        doubt   = false;   // a reading pass doubts it, however confident
+                                   // the engine was (a small-caps opener): wants
+                                   // a look until checked
     std::string original;          // the engine's reading, kept once edited
     bool operator==(const Word&) const = default;
 };

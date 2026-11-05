@@ -2,6 +2,8 @@
 
 #include "Css.hpp"
 
+#include <gtkmm/eventcontrollermotion.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -57,6 +59,28 @@ PageView::PageView() : widgets::DrawingArea("view.page") {
     m_drag->signal_drag_update().connect(sigc::mem_fun(*this, &PageView::on_drag_update));
     m_drag->signal_drag_end().connect(sigc::mem_fun(*this, &PageView::on_drag_end));
     add_controller(m_drag);
+
+    // Middle-drag pans; the wheel scrolls; Ctrl+wheel zooms about the pointer.
+    m_pan = Gtk::GestureDrag::create();
+    m_pan->set_button(GDK_BUTTON_MIDDLE);
+    m_pan->signal_drag_begin().connect([this](double, double) { m_pan_x0 = m_pan_x; m_pan_y0 = m_pan_y; });
+    m_pan->signal_drag_update().connect([this](double dx, double dy) {
+        m_pan_x = m_pan_x0 - dx;
+        m_pan_y = m_pan_y0 - dy;
+        queue_draw();
+    });
+    add_controller(m_pan);
+
+    auto scroll = Gtk::EventControllerScroll::create();
+    scroll->set_flags(Gtk::EventControllerScroll::Flags::BOTH_AXES);
+    scroll->signal_scroll().connect(sigc::mem_fun(*this, &PageView::on_scroll), false);
+    m_scroll = scroll;
+    add_controller(scroll);
+
+    auto motion = Gtk::EventControllerMotion::create();
+    motion->signal_motion().connect([this](double x, double y) { m_px = x; m_py = y; m_pointer_in = true; });
+    motion->signal_leave().connect([this] { m_pointer_in = false; });
+    add_controller(motion);
 }
 
 void PageView::show(const core::Book* book, const core::Page* page) {
@@ -65,6 +89,7 @@ void PageView::show(const core::Book* book, const core::Page* page) {
     m_page = page;
     if (other) { m_word = {}; m_area = -1; }
     if (page && page->id != m_pic_page) { m_surface.reset(); m_pic.reset(); }
+    if (other) m_pan_x = m_pan_y = 0;   // a new page starts at its top
     queue_draw();
 }
 
@@ -90,13 +115,68 @@ void PageView::set_tool(Tool t) {
     set_cursor(t == Tool::Draw ? "crosshair" : "default");
 }
 
+// Where the page sits: scale s (view px per page px) and origin (ox, oy). On an
+// axis where the page fits it is centred; where it does not, the pan picks the
+// part on show and is clamped so the page never leaves the pane.
 bool PageView::layout(double& s, double& ox, double& oy) const {
     if (!m_page || m_page->crop.empty()) return false;
-    const double w = get_width() - 2 * kPad, h = get_height() - 2 * kPad;
-    if (w <= 0 || h <= 0) return false;
-    s  = std::min(w / m_page->crop.width(), h / m_page->crop.height());
-    ox = (get_width()  - s * m_page->crop.width())  / 2.0;
-    oy = (get_height() - s * m_page->crop.height()) / 2.0;
+    const double vw = get_width(), vh = get_height();
+    const double cw = m_page->crop.width(), ch = m_page->crop.height();
+    if (vw <= 2 * kPad || vh <= 2 * kPad) return false;
+    s = m_scale;
+    if (m_fit == Fit::Page)  s = std::min((vw - 2 * kPad) / cw, (vh - 2 * kPad) / ch);
+    if (m_fit == Fit::Width) s = (vw - 2 * kPad) / cw;
+    auto axis = [](double view, double content, double& pan) {
+        const double room = content + 2 * kPad - view;
+        if (room <= 0) { pan = 0; return (view - content) / 2.0; }
+        pan = std::clamp(pan, 0.0, room);
+        return kPad - pan;
+    };
+    ox = axis(vw, s * cw, m_pan_x);
+    oy = axis(vh, s * ch, m_pan_y);
+    return true;
+}
+
+double PageView::zoom() const {
+    double s, ox, oy;
+    return layout(s, ox, oy) ? s : 0.0;
+}
+
+void PageView::set_fit(Fit f) {
+    m_fit = f;
+    m_pan_x = m_pan_y = 0;
+    queue_draw();
+    signal_zoom_changed.emit();
+}
+
+void PageView::zoom_by(double factor) { zoom_at(factor, get_width() / 2.0, get_height() / 2.0); }
+
+// Zoom keeping the page point under (x, y) where it is.
+void PageView::zoom_at(double factor, double x, double y) {
+    double s, ox, oy;
+    if (!layout(s, ox, oy)) return;
+    const double px = (x - ox) / s, py = (y - oy) / s;
+    m_scale = std::clamp(s * factor, 0.05, 8.0);
+    m_fit = Fit::Free;
+    m_pan_x = kPad - (x - px * m_scale);
+    m_pan_y = kPad - (y - py * m_scale);
+    queue_draw();
+    signal_zoom_changed.emit();
+}
+
+bool PageView::on_scroll(double dx, double dy) {
+    auto ev = std::dynamic_pointer_cast<Gtk::EventControllerScroll>(m_scroll);
+    const auto mods = ev ? ev->get_current_event_state() : Gdk::ModifierType{};
+    if ((mods & Gdk::ModifierType::CONTROL_MASK) == Gdk::ModifierType::CONTROL_MASK) {
+        double x = get_width() / 2.0, y = get_height() / 2.0;
+        if (m_pointer_in) { x = m_px; y = m_py; }
+        zoom_at(dy < 0 ? 1.15 : 1.0 / 1.15, x, y);
+        return true;
+    }
+    if ((mods & Gdk::ModifierType::SHIFT_MASK) == Gdk::ModifierType::SHIFT_MASK) std::swap(dx, dy);
+    m_pan_x += dx * 60.0;
+    m_pan_y += dy * 60.0;
+    queue_draw();
     return true;
 }
 

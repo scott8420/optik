@@ -9,6 +9,7 @@
 #include <gtkmm/eventcontrollerkey.h>
 #include <gtkmm/togglebutton.h>
 
+#include <cmath>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -28,6 +29,7 @@ Shell::Shell(App& app) {
     set_title("Optik");
     set_icon_name("optik-logo-symbolic");
     set_default_size(1500, 950);
+    m_recent.load();
 
     build_header();
     build_body();
@@ -45,6 +47,7 @@ Shell::Shell(App& app) {
     add_controller(keys);
     signal_close_request().connect(sigc::mem_fun(*this, &Shell::on_close), false);
 
+    refresh_recent_menu();
     refresh_all();
 }
 
@@ -77,13 +80,25 @@ void Shell::build_header() {
     menu->set_icon_name("open-menu-symbolic");
     auto model = Gio::Menu::create();
     model->append("Save", "win.save");
+    model->append("Save As…", "win.save-as");
     model->append("Export…", "win.export");
+    m_recent_menu = Gio::Menu::create();
+    model->append_submenu("Recent Books", m_recent_menu);
     auto keys = Gio::Menu::create();
     keys->append("Next word to check   F4", "win.next");
     keys->append("Accept word   Ctrl+Enter", "win.accept");
     keys->append("Next page   Ctrl+PgDn", "win.page-next");
     keys->append("Previous page   Ctrl+PgUp", "win.page-prev");
     model->append_section(keys);
+    auto view = Gio::Menu::create();
+    view->append("Fit page", "win.fit-page");
+    view->append("Fit width", "win.fit-width");
+    view->append("Zoom in  (or Ctrl+wheel)", "win.zoom-in");
+    view->append("Zoom out", "win.zoom-out");
+    model->append_section(view);
+    auto about = Gio::Menu::create();
+    about->append("About Optik", "win.about");
+    model->append_section(about);
     menu->set_menu_model(model);
     m_header.pack_end(*menu);
 
@@ -163,6 +178,7 @@ void Shell::build_body() {
     m_view.signal_area_selected.connect([this](int a) { m_area = a; refresh_actions(); });
     m_view.signal_area_drawn.connect(sigc::mem_fun(*this, &Shell::on_area_drawn));
     m_view.signal_area_resized.connect(sigc::mem_fun(*this, &Shell::on_area_resized));
+    m_view.signal_zoom_changed.connect([this] { refresh_status(); });
     m_text.signal_word_focused.connect([this](WordRef w) { on_word(w, true); });
     m_text.signal_edited.connect(sigc::mem_fun(*this, &Shell::on_text_edited));
 }
@@ -176,6 +192,8 @@ void Shell::build_actions(App& app) {
     add("open", [this] { on_open(); });
     add("new", [this] { on_new_from_scans(); });
     add("save", [this] { if (save()) say("Saved."); });
+    add("save-as", [this] { on_save_as(); });
+    add("about", [this] { on_about(); });
     add("export", [this] { on_export(); });
     add("undo", [this] { undo(); });
     add("redo", [this] { redo(); });
@@ -197,6 +215,14 @@ void Shell::build_actions(App& app) {
             read_area(m_area, p->areas[std::size_t(m_area)].box, false);
     });
     add("area-delete", [this] { delete_area(); });
+    add("fit-page",  [this] { m_view.set_fit(PageView::Fit::Page); });
+    add("fit-width", [this] { m_view.set_fit(PageView::Fit::Width); });
+    add("zoom-in",   [this] { m_view.zoom_by(1.25); });
+    add("zoom-out",  [this] { m_view.zoom_by(0.8); });
+    m_actions["open-recent"] = add_action_with_parameter(
+        "open-recent", Glib::VARIANT_TYPE_STRING, [this](const Glib::VariantBase& v) {
+            open_path(Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::ustring>>(v).get());
+        });
     m_actions["area-kind"] = add_action_with_parameter(
         "area-kind", Glib::VARIANT_TYPE_STRING, [this](const Glib::VariantBase& v) {
             ocr::Kind k;
@@ -207,9 +233,14 @@ void Shell::build_actions(App& app) {
     app.set_accels_for_action("win.open", {"<Control>o"});
     app.set_accels_for_action("win.new", {"<Control>n"});
     app.set_accels_for_action("win.save", {"<Control>s"});
+    app.set_accels_for_action("win.save-as", {"<Control><Shift>s"});
     app.set_accels_for_action("win.export", {"<Control>e"});
     app.set_accels_for_action("win.read-page", {"<Control>r"});
     app.set_accels_for_action("win.read-all", {"<Control><Shift>r"});
+    app.set_accels_for_action("win.fit-page", {"<Control>0"});
+    app.set_accels_for_action("win.fit-width", {"<Control>1"});
+    app.set_accels_for_action("win.zoom-in", {"<Control>plus", "<Control>equal", "<Control>KP_Add"});
+    app.set_accels_for_action("win.zoom-out", {"<Control>minus", "<Control>KP_Subtract"});
     // Undo / redo / accept / F4 / paging are caught in on_key (capture), so they
     // reach the journal even from inside the text pane.
 }
@@ -346,6 +377,8 @@ void Shell::refresh_status() {
         where = "Page " + std::to_string(i + 1) + " of " + std::to_string(m_book.pages().size());
         if (p->read) where += "  ·  " + std::to_string(m_book.uncertain_count(*p)) + " to check here";
         where += "  ·  " + std::to_string(book_left) + " in the book";
+        if (const double z = m_view.zoom(); z > 0)
+            where += "  ·  " + std::to_string(int(std::lround(z * 100))) + "%";
     } else {
         where = "No pages.";
     }

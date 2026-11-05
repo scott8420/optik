@@ -34,7 +34,13 @@ Shell& App::shell() {
     return *m_shell;
 }
 
-void App::on_activate() { shell().present(); }
+// A plain start (no folder named) reopens the last book; `optik <folder>` goes
+// through on_open instead and opens that.
+void App::on_activate() {
+    Shell& s = shell();
+    s.present();
+    s.reopen_last();
+}
 
 void App::on_open(const type_vec_files& files, const Glib::ustring&) {
     Shell& s = shell();

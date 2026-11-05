@@ -37,7 +37,7 @@ Rect rect_in(const json& j) {
 // A word is an array, not an object: a book holds a hundred thousand of them,
 // and the file stays readable either way. [text, box, conf, flags, original?]
 json word_out(const ocr::Word& w) {
-    const int flags = (w.checked ? 1 : 0) | (w.edited ? 2 : 0);
+    const int flags = (w.checked ? 1 : 0) | (w.edited ? 2 : 0) | (w.doubt ? 4 : 0);
     json j = json::array({w.text, rect_out(w.box), std::round(w.conf * 10.0f) / 10.0f, flags});
     if (w.edited) j.push_back(w.original);
     return j;
@@ -50,6 +50,7 @@ ocr::Word word_in(const json& j) {
     const int flags = j.at(3).get<int>();
     w.checked = flags & 1;
     w.edited  = flags & 2;
+    w.doubt   = flags & 4;
     if (j.size() > 4) w.original = j.at(4).get<std::string>();
     return w;
 }
@@ -100,7 +101,9 @@ model::split::Half half_in(const std::string& s) {
 json settings_out(const Settings& s) {
     return {{"language", s.language}, {"uncertain_below", s.uncertain_below},
             {"split_spreads", s.split_spreads}, {"mark_running_heads", s.mark_running_heads},
-            {"join_pages", s.join_pages}, {"dehyphenate", s.dehyphenate}};
+            {"join_pages", s.join_pages}, {"dehyphenate", s.dehyphenate},
+            {"mark_headings", s.mark_headings}, {"mend_quotes", s.mend_quotes},
+            {"small_caps", s.small_caps}};
 }
 Settings settings_in(const json& j) {
     Settings s;   // a key missing from an older file keeps its default
@@ -110,6 +113,9 @@ Settings settings_in(const json& j) {
     s.mark_running_heads = j.value("mark_running_heads", s.mark_running_heads);
     s.join_pages         = j.value("join_pages", s.join_pages);
     s.dehyphenate        = j.value("dehyphenate", s.dehyphenate);
+    s.mark_headings      = j.value("mark_headings", s.mark_headings);
+    s.mend_quotes        = j.value("mend_quotes", s.mend_quotes);
+    s.small_caps         = j.value("small_caps", s.small_caps);
     return s;
 }
 
@@ -227,7 +233,8 @@ std::string Book::scan_path(const std::string& scan_id) const {
 }
 
 bool Book::uncertain(const ocr::Word& w) const {
-    return !w.checked && !w.edited && w.conf < float(m_meta.settings.uncertain_below);
+    return !w.checked && !w.edited &&
+           (w.doubt || w.conf < float(m_meta.settings.uncertain_below));
 }
 
 int Book::uncertain_count(const Page& p) const {

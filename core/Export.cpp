@@ -51,6 +51,16 @@ std::string xml_escape(const std::string& s) {
     return o;
 }
 
+// '\n' inside a block is a line break inside its paragraph.
+std::string with_breaks(const std::string& s) {
+    std::string o;
+    for (char c : s) {
+        if (c == '\n') o += "<text:line-break/>";
+        else o += c;
+    }
+    return o;
+}
+
 }  // namespace
 
 // A hyphen at a line end is mended only when the next line starts in lower case:
@@ -80,6 +90,7 @@ std::vector<Block> flow(const Book& book) {
 
     for (const Page& page : book.pages()) {
         bool first_on_page = true;
+        bool last_heading  = false;   // the block before, on this page, was a heading
         for (const auto& area : page.areas) {
             if (!ocr::kind_is_text(area.kind)) continue;
             for (const auto& para : area.paras) {
@@ -93,7 +104,16 @@ std::vector<Block> flow(const Book& book) {
                     }
                     lines.push_back(std::move(s));
                 }
-                std::string text = join_lines(lines, st.dehyphenate);
+                const bool heading = area.kind == ocr::Kind::Heading;
+                // A heading keeps its lines ("CHAPTER II" / "AN IVORY CHARM"):
+                // '\n' in a block is a line break inside it (ODT text:line-break).
+                std::string text;
+                if (heading) {
+                    for (auto& l : lines)
+                        if (!l.empty()) { if (!text.empty()) text += '\n'; text += l; }
+                } else {
+                    text = join_lines(lines, st.dehyphenate);
+                }
                 if (text.empty()) continue;
 
                 // Joined to the paragraph before when that one did not end a
@@ -101,14 +121,17 @@ std::vector<Block> flow(const Book& book) {
                 // broke it (if the book says to join there) or the engine split a
                 // paragraph mid-sentence -- after an indented first line, or at a
                 // hyphenated line end. A real paragraph does not start in lower case.
-                const bool heading = area.kind == ocr::Kind::Heading;
                 const bool may_join = first_on_page ? st.join_pages : true;
                 if (open_para && may_join && !heading && starts_lower(text) &&
                     !out.empty() && out.back().kind == Block::Paragraph) {
                     out.back().text = join_lines({out.back().text, text}, st.dehyphenate);
+                } else if (heading && last_heading && !out.empty() &&
+                           out.back().kind == Block::Heading && out.back().page_id == page.id) {
+                    out.back().text += '\n' + text;   // one heading, read as two blocks
                 } else {
                     out.push_back(Block{heading ? Block::Heading : Block::Paragraph, text, page.id});
                 }
+                last_heading = heading;
                 first_on_page = false;
                 open_para = !heading && !ends_sentence(out.back().text);
             }
@@ -182,9 +205,9 @@ bool write_odt(const std::vector<Block>& blocks, const std::string& title,
     for (const auto& b : blocks) {
         if (b.kind == Block::Heading)
             content += "   <text:h text:style-name=\"Heading_20_1\" text:outline-level=\"1\">" +
-                       xml_escape(b.text) + "</text:h>\n";
+                       with_breaks(xml_escape(b.text)) + "</text:h>\n";
         else
-            content += "   <text:p text:style-name=\"Text_20_body\">" + xml_escape(b.text) + "</text:p>\n";
+            content += "   <text:p text:style-name=\"Text_20_body\">" + with_breaks(xml_escape(b.text)) + "</text:p>\n";
     }
     content += "  </office:text>\n </office:body>\n</office:document-content>\n";
 

@@ -6,12 +6,14 @@
 #include "model/Intake.hpp"
 
 #include <giomm/file.h>
+#include <gtkmm/aboutdialog.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/filedialog.h>
 #include <gtkmm/label.h>
 #include <gtkmm/spinbutton.h>
 
+#include <cstdlib>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -28,6 +30,9 @@ void Shell::open_path(const std::string& path) {
 void Shell::on_open() {
     auto dlg = Gtk::FileDialog::create();
     dlg->set_title("Open a book (its .optik folder)");
+    const auto known = m_recent.existing();   // start where the last book lives
+    if (!known.empty())
+        dlg->set_initial_folder(Gio::File::create_for_path(fs::path(known[0]).parent_path().string()));
     dlg->select_folder(*this, [this, dlg](const Glib::RefPtr<Gio::AsyncResult>& r) {
         try {
             if (auto f = dlg->select_folder_finish(r)) open_path(f->get_path());
@@ -51,7 +56,15 @@ void Shell::open_book(const std::string& folder) {
     m_batch_total = m_batch_done = 0;
     core::Book b;
     const auto st = core::Book::open(folder, b);
-    if (st != core::Status::Ok) { say(std::string("Could not open: ") + core::status_text(st)); return; }
+    if (st != core::Status::Ok) {
+        say(std::string("Could not open: ") + core::status_text(st));
+        if (st == core::Status::NotABook) {   // gone from where it was: off the list
+            m_recent.forget(folder);
+            m_recent.save();
+            refresh_recent_menu();
+        }
+        return;
+    }
     m_book = std::move(b);
     m_has_book = true;
     m_journal.clear();
@@ -61,6 +74,9 @@ void Shell::open_book(const std::string& folder) {
     m_pictures_pending.clear();
     m_thumbs_pending.clear();
     m_page_id.clear();
+    m_recent.touch(m_book.folder());
+    m_recent.save();
+    refresh_recent_menu();
     refresh_all();
     say("Opened " + m_book.meta().title + ": " + std::to_string(m_book.pages().size()) + " pages.");
 }
@@ -125,6 +141,90 @@ bool Shell::save() {
     return true;
 }
 
+// -- s25: the app remembers its books ------------------------------------------------
+
+void Shell::reopen_last() {
+    if (m_has_book) return;
+    for (const auto& b : m_recent.existing()) {
+        open_book(b);
+        if (m_has_book) return;
+    }
+}
+
+void Shell::refresh_recent_menu() {
+    if (!m_recent_menu) return;
+    m_recent_menu->remove_all();
+    const char* home = std::getenv("HOME");
+    const std::string h = home ? home : "";
+    for (const auto& b : m_recent.existing()) {
+        if (m_has_book && b == fs::absolute(m_book.folder()).lexically_normal().string()) continue;
+        std::string where = fs::path(b).parent_path().string();
+        if (!h.empty() && where.rfind(h, 0) == 0) where = "~" + where.substr(h.size());
+        const std::string label = fs::path(b).stem().string() + "    " + where;
+        auto item = Gio::MenuItem::create(label, "");
+        item->set_action_and_target("win.open-recent", Glib::Variant<Glib::ustring>::create(b));
+        m_recent_menu->append_item(item);
+    }
+    if (m_recent_menu->get_n_items() == 0) {
+        auto none = Gio::MenuItem::create("(none yet)", "win.no-such-action");
+        m_recent_menu->append_item(none);
+    }
+}
+
+// Save As: save, copy the whole book folder on a worker (scans and all -- the
+// book is whole on its own), then open the copy and give it the new name. The
+// original stays as it was saved.
+void Shell::on_save_as() {
+    if (!m_has_book) return;
+    if (!m_jobs.idle()) { say("Wait for the work under way to finish (or Cancel), then Save As."); return; }
+    if (!save()) return;
+    auto dlg = Gtk::FileDialog::create();
+    dlg->set_title("Save the book as (a new .optik folder)");
+    dlg->set_initial_folder(Gio::File::create_for_path(fs::path(m_book.folder()).parent_path().string()));
+    dlg->set_initial_name(m_book.meta().title + " copy.optik");
+    dlg->save(*this, [this, dlg](const Glib::RefPtr<Gio::AsyncResult>& r) {
+        Glib::RefPtr<Gio::File> f;
+        try { f = dlg->save_finish(r); } catch (const Glib::Error&) { return; }
+        if (!f) return;
+        std::string to = f->get_path();
+        if (fs::path(to).extension() != ".optik") to += ".optik";
+        const std::string from = m_book.folder();
+        batch_begin("Saving a copy", 1);
+        m_jobs.submit([this, from, to](ocr::Engine&) -> core::Jobs::Landing {
+            auto why = std::make_shared<std::string>();
+            const auto st = core::copy_book(from, to, why.get());
+            return [this, st, why, to] {
+                batch_tick();
+                if (st != core::Status::Ok) { say("Save As failed: " + *why); return; }
+                open_book(to);
+                if (!m_has_book || m_book.folder() != to) return;
+                const std::string name = fs::path(to).stem().string();
+                if (name != m_book.meta().title)
+                    step("Title " + name, [&](core::Edit& e) { e.meta().title = name; });
+                save();
+                say("Saved as " + to);
+            };
+        });
+    });
+}
+
+void Shell::on_about() {
+    if (!m_about) {
+        auto dlg = std::make_unique<Gtk::AboutDialog>();
+        dlg->set_transient_for(*this);
+        dlg->set_modal(true);
+        dlg->set_hide_on_close(true);
+        dlg->set_program_name("Optik");
+        dlg->set_version(std::string(OPTIK_BUILD) + " -- Tesseract " + ocr::Engine::version());
+        dlg->set_comments("An OCR workbench for scanned books, on ABBYY FineReader's model.\n"
+                          "The engine proposes; the author proofs; the book exports to ODT for Writer.");
+        dlg->set_logo_icon_name("optik-logo-symbolic");
+        dlg->set_authors({"Scott"});
+        m_about = std::move(dlg);
+    }
+    m_about->present();
+}
+
 void Shell::on_export() {
     if (!m_has_book) return;
     m_text.commit_now();
@@ -181,8 +281,14 @@ void Shell::build_settings_popover() {
     auto* heads = Gtk::make_managed<widgets::CheckButton>("settings.heads", "Mark running heads and folios when reading");
     auto* join  = Gtk::make_managed<widgets::CheckButton>("settings.join", "Join paragraphs across the page turn on export");
     auto* hyph  = Gtk::make_managed<widgets::CheckButton>("settings.hyph", "Mend words hyphenated at line ends on export");
+    auto* heads2 = Gtk::make_managed<widgets::CheckButton>("settings.headings", "Mark headings (short, centred, space below) when reading");
+    auto* quotes = Gtk::make_managed<widgets::CheckButton>("settings.quotes", "Mend quotes read as two marks (``Stop -> \u201CStop) when reading");
+    auto* caps   = Gtk::make_managed<widgets::CheckButton>("settings.smallcaps", "Small caps: capital headings, check chapter openers when reading");
+    heads2->set_tooltip_text("Takes effect on the next read of a page");
+    quotes->set_tooltip_text("Takes effect on the next read of a page");
+    caps->set_tooltip_text("Takes effect on the next read of a page");
 
-    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, thr_row, split, heads, join, hyph})
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, thr_row, split, heads, heads2, quotes, caps, join, hyph})
         box->append(*w);
     m_settings_pop.set_child(*box);
     m_settings_btn.set_popover(m_settings_pop);
@@ -198,6 +304,9 @@ void Shell::build_settings_popover() {
         heads->set_active(s.mark_running_heads);
         join->set_active(s.join_pages);
         hyph->set_active(s.dehyphenate);
+        heads2->set_active(s.mark_headings);
+        quotes->set_active(s.mend_quotes);
+        caps->set_active(s.small_caps);
         *quiet = false;
     };
     (void)syncing;
@@ -233,6 +342,18 @@ void Shell::build_settings_popover() {
     hyph->signal_toggled().connect([=] {
         const bool v = hyph->get_active();
         change("Mend hyphens", [v](core::Settings& s) { s.dehyphenate = v; });
+    });
+    heads2->signal_toggled().connect([=] {
+        const bool v = heads2->get_active();
+        change("Headings", [v](core::Settings& s) { s.mark_headings = v; });
+    });
+    quotes->signal_toggled().connect([=] {
+        const bool v = quotes->get_active();
+        change("Mend quotes", [v](core::Settings& s) { s.mend_quotes = v; });
+    });
+    caps->signal_toggled().connect([=] {
+        const bool v = caps->get_active();
+        change("Small caps", [v](core::Settings& s) { s.small_caps = v; });
     });
 }
 

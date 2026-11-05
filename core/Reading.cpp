@@ -1,5 +1,7 @@
 #include "Reading.hpp"
 
+#include "Passes.hpp"
+
 namespace optik::core {
 
 ReadRequest request_for(const Book& book, const Page& page) {
@@ -28,11 +30,24 @@ Reading read(ocr::Engine& engine, const ReadRequest& r) {
     }
     if (r.area >= 0) {
         out.ok = engine.read_area(r.scan_path, r.crop, r.area_box, out.paras, &out.why);
+        // The author drew or moved this area: it keeps its kind, so only the
+        // word-level pass applies (quotes); headings and openers are the page's.
+        if (out.ok && r.settings.mend_quotes) {
+            std::vector<ocr::Area> one(1);
+            one[0].paras = std::move(out.paras);
+            mend_quotes(one);
+            out.paras = std::move(one[0].paras);
+        }
         return out;
     }
     out.ok = engine.read_page(r.scan_path, r.crop, out.areas, &out.why);
-    if (out.ok && r.settings.mark_running_heads)
-        mark_running_heads(out.areas, r.crop.height());
+    if (!out.ok) return out;
+    // The passes, each the book's to decline (Passes.hpp has the order's why).
+    const Settings& st = r.settings;
+    if (st.mark_running_heads) mark_running_heads(out.areas, r.crop.height());
+    if (st.mark_headings)      mark_headings(out.areas);
+    if (st.mend_quotes)        mend_quotes(out.areas);
+    if (st.small_caps)         mark_small_caps(out.areas);
     return out;
 }
 

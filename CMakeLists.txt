@@ -24,7 +24,7 @@ endif()
 add_compile_options(-Wall -Wextra)
 
 # The build stamp the About line and the selftest print. Bumped per session.
-set(OPTIK_BUILD "s24")
+set(OPTIK_BUILD "s25")
 set(OPTIK_APP_ID "io.github.example.Optik")
 
 find_package(PkgConfig REQUIRED)
@@ -55,6 +55,8 @@ add_library(optik_core STATIC
     core/Undo.cpp
     core/Jobs.cpp
     core/Reading.cpp
+    core/Passes.cpp
+    core/Recent.cpp
     core/Picture.cpp
     core/Export.cpp
 )
@@ -68,6 +70,8 @@ add_executable(optik_selftest
     tests/selftest.cpp
     tests/selftest_scan.cpp
     tests/selftest_core.cpp
+    tests/selftest_passes.cpp
+    tests/selftest_recent.cpp
 )
 target_include_directories(optik_selftest PRIVATE tests)
 target_link_libraries(optik_selftest PRIVATE optik_core)
