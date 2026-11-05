@@ -60,6 +60,7 @@ private:
     const core::Page* current() const;                       // helper
     bool step(const std::string& label, const std::function<void(core::Edit&)>& fn);  // the door
     void undo();                                             // handler: undo
+    void set_draw(bool on);                                  // helper: the Draw Area tool
     void redo();                                             // handler: redo
 
     // -- files (Shell_files.cpp)
@@ -76,11 +77,12 @@ private:
     void sync_settings_popover();                            // helper
 
     // -- reading (Shell_read.cpp)
-    void read_pages(const std::vector<std::string>& ids, const std::string& label);  // reading
+    void read_pages(const std::vector<std::string>& ids, const std::string& label, bool dialog = false);  // reading
     void read_area(int area, const core::Rect& box, bool new_area);                 // reading
     void request_picture(const std::string& page_id);       // reading: page view
     void request_thumbs();                                   // reading: pages pane
-    void batch_begin(const std::string& label, int total);  // reading: progress
+    void batch_begin(const std::string& label, int total, bool dialog = false);  // reading: progress
+    void refresh_progress_dialog();                          // reading: the progress window
     void batch_tick();                                       // reading
     void on_cancel();                                        // handler: Cancel
 
@@ -113,6 +115,12 @@ private:
 
     std::string m_batch_label;
     int m_batch_total = 0, m_batch_done = 0;
+    bool m_batch_dialog = false;                             // a long job: show the progress window
+    std::unique_ptr<Gtk::Window> m_pdlg;                     // made once; non-modal, never blocks
+    widgets::Label       m_pdlg_what{"progress.what"};
+    widgets::Label       m_pdlg_count{"progress.count"};
+    widgets::ProgressBar m_pdlg_bar{"progress.bar"};
+    sigc::connection     m_pdlg_pulse;
 
     // -- widgets
     widgets::HeaderBar m_header{"header"};
@@ -128,7 +136,6 @@ private:
     widgets::Label     m_status_msg{"status.message"};
     widgets::ProgressBar m_progress{"status.progress"};
     widgets::Button    m_cancel{"status.cancel"};
-    widgets::MenuButton m_settings_btn{"header.settings"};
     Gtk::Popover       m_settings_pop;
     std::function<void()> m_settings_sync;
     sigc::connection   m_msg_timer;

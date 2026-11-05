@@ -51,68 +51,63 @@ Shell::Shell(App& app) {
     refresh_all();
 }
 
-Shell::~Shell() { m_jobs.cancel(); }
+Shell::~Shell() {
+    m_jobs.cancel();
+    m_pdlg_pulse.disconnect();
+    m_settings_pop.unparent();   // parented to the title by hand, so unparented by hand
+}
+
+// Draw Area: a check item in the menu (Ctrl+D); Esc leaves it.
+void Shell::set_draw(bool on) {
+    if (auto a = m_actions["draw"]) a->change_state(on);
+    m_view.set_tool(on ? PageView::Tool::Draw : PageView::Tool::Select);
+    if (on) say("Drag on the page to add a text area; it is read at once. Esc leaves.");
+}
 
 // -- zone: header bar ----------------------------------------------------------
 
 void Shell::build_header() {
-    auto button = [](const char* name, const char* label, const char* action, const char* tip) {
-        auto* b = Gtk::make_managed<widgets::Button>(name, label);
-        b->set_action_name(action);
-        b->set_tooltip_text(tip);
-        return b;
-    };
-    m_header.pack_start(*button("header.open", "Open", "win.open", "Open a book (Ctrl+O)"));
-    m_header.pack_start(*button("header.new", "New from Scans", "win.new", "Make a book from a folder of scans (Ctrl+N)"));
-    auto* undo = button("header.undo", "", "win.undo", "Undo (Ctrl+Z)");
-    undo->set_icon_name("edit-undo-symbolic");
-    auto* redo = button("header.redo", "", "win.redo", "Redo (Ctrl+Shift+Z)");
-    redo->set_icon_name("edit-redo-symbolic");
-    m_header.pack_start(*undo);
-    m_header.pack_start(*redo);
-
+    // One menu, no button row (Scott, s25: "it appears like clutter"). The
+    // header holds the book's title -- the Book settings point at it -- and ☰.
     m_title.set_text("Optik");
     m_title.add_css_class("title");
     m_header.set_title_widget(m_title);
 
-    // Right side, packed end-first.
     auto* menu = Gtk::make_managed<widgets::MenuButton>("header.menu");
     menu->set_icon_name("open-menu-symbolic");
+    menu->set_tooltip_text("Optik's menu");
     auto model = Gio::Menu::create();
-    model->append("Save", "win.save");
-    model->append("Save As…", "win.save-as");
-    model->append("Export…", "win.export");
+
+    auto files = Gio::Menu::create();
+    files->append("Open…", "win.open");
+    files->append("New from Scans…", "win.new");
     m_recent_menu = Gio::Menu::create();
-    model->append_submenu("Recent Books", m_recent_menu);
-    auto keys = Gio::Menu::create();
-    keys->append("Next word to check   F4", "win.next");
-    keys->append("Accept word   Ctrl+Enter", "win.accept");
-    keys->append("Next page   Ctrl+PgDn", "win.page-next");
-    keys->append("Previous page   Ctrl+PgUp", "win.page-prev");
-    model->append_section(keys);
-    auto view = Gio::Menu::create();
-    view->append("Fit page", "win.fit-page");
-    view->append("Fit width", "win.fit-width");
-    view->append("Zoom in  (or Ctrl+wheel)", "win.zoom-in");
-    view->append("Zoom out", "win.zoom-out");
-    model->append_section(view);
-    auto about = Gio::Menu::create();
-    about->append("About Optik", "win.about");
-    about->append("Quit", "win.quit");
-    model->append_section(about);
-    menu->set_menu_model(model);
-    m_header.pack_end(*menu);
+    files->append_submenu("Recent Books", m_recent_menu);
+    files->append("Save", "win.save");
+    files->append("Save As…", "win.save-as");
+    files->append("Export…", "win.export");
+    model->append_section(files);
 
-    m_header.pack_end(*button("header.export", "Export", "win.export", "Export the book as ODT or text (Ctrl+E)"));
-    m_settings_btn.set_label("Book");
-    m_settings_btn.set_tooltip_text("This book's settings: language, what to check, export rules");
-    build_settings_popover();
-    m_header.pack_end(m_settings_btn);
-    m_header.pack_end(*button("header.next", "Next to Check", "win.next", "Next uncertain word (F4)"));
+    auto edit = Gio::Menu::create();
+    edit->append("Undo", "win.undo");
+    edit->append("Redo", "win.redo");
+    model->append_section(edit);
 
-    auto* area = Gtk::make_managed<widgets::MenuButton>("header.area");
-    area->set_label("Area");
-    area->set_tooltip_text("The selected area: what it is, read it again, delete it");
+    auto read = Gio::Menu::create();
+    read->append("Read Page", "win.read-page");
+    read->append("Read All (pages not read yet)", "win.read-all");
+    read->append("Rescan Book (read every page again)", "win.rescan");
+    model->append_section(read);
+
+    auto proof = Gio::Menu::create();
+    proof->append("Next Word to Check", "win.next");
+    proof->append("Accept Word", "win.accept");
+    proof->append("Next Page", "win.page-next");
+    proof->append("Previous Page", "win.page-prev");
+    model->append_section(proof);
+
+    auto areas = Gio::Menu::create();
+    areas->append("Draw Area", "win.draw");
     auto am = Gio::Menu::create();
     auto kinds = Gio::Menu::create();
     kinds->append("Text", "win.area-kind::text");
@@ -123,20 +118,30 @@ void Shell::build_header() {
     kinds->append("Ignore", "win.area-kind::ignore");
     am->append_section(kinds);
     auto acts = Gio::Menu::create();
-    acts->append("Read area again", "win.area-read");
-    acts->append("Delete area   Del", "win.area-delete");
+    acts->append("Read Area Again", "win.area-read");
+    acts->append("Delete Area   Del", "win.area-delete");
     am->append_section(acts);
-    area->set_menu_model(am);
-    m_header.pack_end(*area);
+    areas->append_submenu("Selected Area", am);
+    model->append_section(areas);
 
-    auto* draw = Gtk::make_managed<widgets::ToggleButton>("header.draw", "Draw Area");
-    draw->set_tooltip_text("Drag on the page to add a text area; it is read at once (Esc leaves)");
-    draw->signal_toggled().connect([this, draw] {
-        m_view.set_tool(draw->get_active() ? PageView::Tool::Draw : PageView::Tool::Select);
-    });
-    m_header.pack_end(*draw);
-    m_header.pack_end(*button("header.readall", "Read All", "win.read-all", "Read every page not read yet (Ctrl+Shift+R)"));
-    m_header.pack_end(*button("header.read", "Read Page", "win.read-page", "Read this page again (Ctrl+R)"));
+    auto book = Gio::Menu::create();
+    book->append("Book Settings…", "win.book-settings");
+    auto view = Gio::Menu::create();
+    view->append("Fit Page", "win.fit-page");
+    view->append("Fit Width", "win.fit-width");
+    view->append("Zoom In  (or Ctrl+wheel)", "win.zoom-in");
+    view->append("Zoom Out", "win.zoom-out");
+    book->append_submenu("View", view);
+    model->append_section(book);
+
+    auto app = Gio::Menu::create();
+    app->append("About Optik", "win.about");
+    app->append("Quit", "win.quit");
+    model->append_section(app);
+
+    menu->set_menu_model(model);
+    m_header.pack_end(*menu);
+    build_settings_popover();
     set_titlebar(m_header);
 }
 
@@ -195,7 +200,38 @@ void Shell::build_actions(App& app) {
     add("save", [this] { if (save()) say("Saved."); });
     add("save-as", [this] { on_save_as(); });
     add("about", [this] { on_about(); });
-    add("quit", [this] { close(); });   // through on_close: commit, cancel, save
+    add("quit", [this] { close(); });
+    add("rescan", [this] {
+        // Every page again, so the reading passes reach a book read before them --
+        // but not a page the author has proofed (a checked or edited word, an area
+        // he set): a rescan must not throw his work away. Read Page does one.
+        std::vector<std::string> ids;
+        int kept = 0;
+        for (const auto& p : m_book.pages()) {
+            bool proofed = false;
+            for (const auto& a : p.areas) {
+                proofed = proofed || a.user;
+                for (const auto& para : a.paras)
+                    for (const auto& l : para.lines)
+                        for (const auto& w : l.words) proofed = proofed || w.checked || w.edited;
+            }
+            if (proofed) ++kept; else ids.push_back(p.id);
+        }
+        if (ids.empty()) { say("Every page has your proofing on it; Read Page reads one again."); return; }
+        read_pages(ids, "Rescanning the book", true);
+        if (kept) say(std::to_string(kept) + (kept == 1 ? " proofed page" : " proofed pages") +
+                      " kept as it was; Read Page reads one again.");
+    });
+    add("book-settings", [this] {
+        if (!m_has_book) return;
+        sync_settings_popover();
+        m_settings_pop.popup();
+    });
+    m_actions["draw"] = add_action_bool("draw", [this] {
+        bool on = false;
+        m_actions["draw"]->get_state(on);
+        set_draw(!on);
+    }, false);   // through on_close: commit, cancel, save
     add("export", [this] { on_export(); });
     add("undo", [this] { undo(); });
     add("redo", [this] { redo(); });
@@ -204,7 +240,7 @@ void Shell::build_actions(App& app) {
         std::vector<std::string> ids;
         for (const auto& p : m_book.pages()) if (!p.read) ids.push_back(p.id);
         if (ids.empty()) { say("Every page has been read. Read Page reads one again."); return; }
-        read_pages(ids, "Reading");
+        read_pages(ids, "Reading the book", true);
     });
     add("next", [this] { next_to_check(); });
     add("accept", [this] { accept_word(); });
@@ -237,6 +273,15 @@ void Shell::build_actions(App& app) {
     app.set_accels_for_action("win.save", {"<Control>s"});
     app.set_accels_for_action("win.save-as", {"<Control><Shift>s"});
     app.set_accels_for_action("win.quit", {"<Control>q"});
+    app.set_accels_for_action("win.draw", {"<Control>d"});
+    // Shown in the menu; on_key catches these first (capture) so they reach the
+    // journal even from inside the text pane, and either path runs the same verb.
+    app.set_accels_for_action("win.undo", {"<Control>z"});
+    app.set_accels_for_action("win.redo", {"<Control><Shift>z", "<Control>y"});
+    app.set_accels_for_action("win.next", {"F4"});
+    app.set_accels_for_action("win.accept", {"<Control>Return"});
+    app.set_accels_for_action("win.page-next", {"<Control>Page_Down"});
+    app.set_accels_for_action("win.page-prev", {"<Control>Page_Up"});
     app.set_accels_for_action("win.export", {"<Control>e"});
     app.set_accels_for_action("win.read-page", {"<Control>r"});
     app.set_accels_for_action("win.read-all", {"<Control><Shift>r"});
@@ -259,7 +304,7 @@ bool Shell::on_key(guint key, guint, Gdk::ModifierType mods) {
     if (ctrl && key == GDK_KEY_Page_Up)   { go_to(m_book.index_of(m_page_id) - 1); return true; }
     if (key == GDK_KEY_Escape) {
         if (m_view.tool() == PageView::Tool::Draw) {
-            if (auto* t = dynamic_cast<Gtk::ToggleButton*>(registry::find("header.draw"))) t->set_active(false);
+            set_draw(false);
             return true;
         }
         if (m_batch_total) { on_cancel(); return true; }
@@ -388,6 +433,7 @@ void Shell::refresh_status() {
     m_status_where.set_text(where);
 
     const bool busy = m_batch_total > 0;
+    refresh_progress_dialog();
     m_progress.set_visible(busy);
     m_cancel.set_visible(busy);
     if (busy) {
@@ -416,13 +462,16 @@ void Shell::refresh_actions() {
     en("redo", m_journal.can_redo());
     en("read-page", p != nullptr);
     en("read-all", m_has_book && !m_book.pages().empty());
+    en("rescan", m_has_book && !m_book.pages().empty());
+    en("draw", p != nullptr);
+    en("book-settings", m_has_book);
+    en("save-as", m_has_book);
     en("next", m_has_book);
     en("accept", m_word.valid());
     en("area-kind", area);
     en("area-read", area);
     en("area-delete", area);
     en("cancel", m_batch_total > 0);
-    m_settings_btn.set_sensitive(m_has_book);
 }
 
 void Shell::say(const std::string& msg) {

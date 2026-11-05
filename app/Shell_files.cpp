@@ -106,7 +106,7 @@ void Shell::new_from_scans(const std::string& folder) {
     for (const auto& f : found.scans) paths.push_back(f.path);
     const bool split = m_book.meta().settings.split_spreads;
     const std::string dest = m_book.folder();
-    batch_begin("Importing", 1);
+    batch_begin("Importing the scans", 1, true);
     m_jobs.submit([this, paths, split, dest](ocr::Engine&) -> core::Jobs::Landing {
         auto plan = std::make_shared<core::ImportPlan>(core::plan_import(paths, split));
         auto copied = std::make_shared<std::vector<core::Scan>>(core::copy_scans(dest, plan->paths));
@@ -189,7 +189,7 @@ void Shell::on_save_as() {
         std::string to = f->get_path();
         if (fs::path(to).extension() != ".optik") to += ".optik";
         const std::string from = m_book.folder();
-        batch_begin("Saving a copy", 1);
+        batch_begin("Saving a copy of the book", 1, true);
         m_jobs.submit([this, from, to](ocr::Engine&) -> core::Jobs::Landing {
             auto why = std::make_shared<std::string>();
             const auto st = core::copy_book(from, to, why.get());
@@ -291,7 +291,7 @@ void Shell::build_settings_popover() {
     for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, thr_row, split, heads, heads2, quotes, caps, join, hyph})
         box->append(*w);
     m_settings_pop.set_child(*box);
-    m_settings_btn.set_popover(m_settings_pop);
+    m_settings_pop.set_parent(m_title);   // ☰ -> Book Settings… points it at the title
 
     bool syncing = false;
     auto quiet = std::make_shared<bool>(false);
