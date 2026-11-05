@@ -98,6 +98,7 @@ void Shell::build_header() {
     model->append_section(view);
     auto about = Gio::Menu::create();
     about->append("About Optik", "win.about");
+    about->append("Quit", "win.quit");
     model->append_section(about);
     menu->set_menu_model(model);
     m_header.pack_end(*menu);
@@ -194,6 +195,7 @@ void Shell::build_actions(App& app) {
     add("save", [this] { if (save()) say("Saved."); });
     add("save-as", [this] { on_save_as(); });
     add("about", [this] { on_about(); });
+    add("quit", [this] { close(); });   // through on_close: commit, cancel, save
     add("export", [this] { on_export(); });
     add("undo", [this] { undo(); });
     add("redo", [this] { redo(); });
@@ -234,6 +236,7 @@ void Shell::build_actions(App& app) {
     app.set_accels_for_action("win.new", {"<Control>n"});
     app.set_accels_for_action("win.save", {"<Control>s"});
     app.set_accels_for_action("win.save-as", {"<Control><Shift>s"});
+    app.set_accels_for_action("win.quit", {"<Control>q"});
     app.set_accels_for_action("win.export", {"<Control>e"});
     app.set_accels_for_action("win.read-page", {"<Control>r"});
     app.set_accels_for_action("win.read-all", {"<Control><Shift>r"});
