@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Optik resource bundle. Currently just the app logo, carried the symbolic
+     way (currentColor SVG under the freedesktop icon-theme shape) so
+     set_icon_name("optik-logo-symbolic") resolves it out of the compiled-in
+     bundle and GTK recolours it to the theme foreground -- no disk extraction,
+     no icon installed on the user's system.
+
+     The prefix MUST stay in step with what Application::on_activate passes to
+     IconTheme::add_resource_path (/io/github/example/Optik/icons). GTK's icon
+     lookup is rigid about the .../scalable/apps/ tail, so the files live there.
+
+     SYMBOLIC-SVG GOTCHA (s16): the logo SVG root must carry a `viewBox` and NO
+     `width`/`height`. Per the GTK4 symbolic-icon format the root width/height
+     DETERMINE the icon size, so if they disagree with the viewBox coordinate
+     space (paths in a 0..1000 box under width="48"), GTK sizes the canvas to 48
+     and the artwork lands off-canvas: the icon renders blank/clipped. `fill`
+     and root `color` are ignored by the symbolic recolor (GTK repaints to the
+     theme foreground), so keep the root to just `xmlns` + `viewBox`. Shapes
+     must be <path>/<circle>/<rect> and use FILL, not stroke (stroke isn't
+     recolored).
+
+     PLACEHOLDER APP-ID: the "io/github/example/Optik" path mirrors OPTIK_APP_ID
+     (io.github.example.Optik). It moves in the same one-pass app-id rename
+     CMake/DESIGN already flag (var + Application string + this prefix + the
+     add_resource_path call, all together). -->
+<gresources>
+  <gresource prefix="/io/github/example/Optik/icons/scalable/apps">
+    <file preprocess="xml-stripblanks" alias="optik-logo-symbolic.svg">icons/scalable/apps/optik-logo-symbolic.svg</file>
+  </gresource>
+</gresources>

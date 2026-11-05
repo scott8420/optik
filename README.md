@@ -1,0 +1,37 @@
+# Optik
+
+An OCR workbench for scanned books, for Linux (GTK4 / gtkmm-4.0), on
+ABBYY FineReader's model: the page is always in view, the engine (Tesseract)
+proposes the page's areas and its text, the author adjusts what is wrong and
+proofs what is uncertain, and the book exports to ODT for LibreOffice Writer.
+
+    | Pages | the page, its areas, uncertain words | the text |
+
+- **New from Scans** -- a folder of scans becomes a book beside it
+  (`<folder>.optik/`); two-page spreads are split; every page is read.
+- **The page** -- areas coloured by kind (text green, heading blue, picture
+  red, running head / folio purple); uncertain words amber. Click a word to
+  find it in the text. Drag an area's edge to resize it (it is read again);
+  **Draw Area** to add one; **Area** menu or Del to retype or remove it.
+- **The text** -- line for line as printed, editable; F4 goes to the next word
+  to check, Ctrl+Enter accepts it.
+- **Undo** -- every change, Ctrl+Z / Ctrl+Shift+Z, from anywhere.
+- **Export** -- ODT (Text body + Heading 1, for Writer to restyle) or plain
+  text. Running heads and folios left out; paragraphs broken by the page turn
+  joined; line-end hyphens mended. Each is a Book setting.
+
+## Build
+
+    ./build.sh && ./build/optik_selftest && build/optik
+
+Dependencies are listed at the top of `build.sh`. Run `build/optik <folder>`
+to open a book or make one from a folder of scans.
+
+## Layout
+
+See `docs/ARCHITECTURE.md`. `core/` and `libs/` are GTK-free; the selftest
+runs them headless.
+
+## License
+
+MIT.
