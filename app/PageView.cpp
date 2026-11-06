@@ -1,5 +1,8 @@
 #include "PageView.hpp"
 
+#include "core/Audit.hpp"
+#include "core/PageOps.hpp"
+
 #include "Css.hpp"
 
 #include <gtkmm/eventcontrollermotion.h>
@@ -88,14 +91,14 @@ void PageView::show(const core::Book* book, const core::Page* page) {
     m_book = book;
     m_page = page;
     if (other) { m_word = {}; m_area = -1; }
-    if (page && page->id != m_pic_page) { m_surface.reset(); m_pic.reset(); }
+    if (page && core::look_key(*page) != m_pic_key) { m_surface.reset(); m_pic.reset(); }
     if (other) m_pan_x = m_pan_y = 0;   // a new page starts at its top
     queue_draw();
 }
 
-void PageView::set_picture(const std::string& page_id, std::shared_ptr<const core::Picture> pic) {
+void PageView::set_picture(const std::string& key, std::shared_ptr<const core::Picture> pic) {
     if (!pic || !pic->valid()) return;
-    m_pic_page = page_id;
+    m_pic_key = key;
     m_pic = std::move(pic);
     m_surface = Cairo::ImageSurface::create(Cairo::Surface::Format::ARGB32, m_pic->width, m_pic->height);
     m_surface->flush();
@@ -121,7 +124,8 @@ void PageView::set_tool(Tool t) {
 bool PageView::layout(double& s, double& ox, double& oy) const {
     if (!m_page || m_page->crop.empty()) return false;
     const double vw = get_width(), vh = get_height();
-    const double cw = m_page->crop.width(), ch = m_page->crop.height();
+    const core::Size2i ps = core::page_size(*m_page);    // the turned crop (s26)
+    const double cw = ps.w, ch = ps.h;
     if (vw <= 2 * kPad || vh <= 2 * kPad) return false;
     s = m_scale;
     if (m_fit == Fit::Page)  s = std::min((vw - 2 * kPad) / cw, (vh - 2 * kPad) / ch);
@@ -192,15 +196,15 @@ double PageView::to_page_y(double y) const {
 void PageView::on_draw(const Cairo::RefPtr<Cairo::Context>& cr, int, int) {
     double s, ox, oy;
     if (!layout(s, ox, oy)) return;
-    const auto& crop = m_page->crop;
+    const core::Size2i ps = core::page_size(*m_page);
 
     // The paper, then the scan (or plain paper while it loads).
     cr->save();
     cr->translate(ox, oy);
-    cr->rectangle(0, 0, s * crop.width(), s * crop.height());
+    cr->rectangle(0, 0, s * ps.w, s * ps.h);
     cr->set_source_rgb(1, 1, 1);
     cr->fill();
-    if (m_surface && m_pic && m_pic_page == m_page->id) {
+    if (m_surface && m_pic && m_pic_key == core::look_key(*m_page)) {
         cr->save();
         cr->scale(s / m_pic->scale, s / m_pic->scale);
         auto pat = Cairo::SurfacePattern::create(m_surface);
@@ -268,6 +272,12 @@ void PageView::on_press(int, double x, double y) {
     grab_focus();
     if (!m_page || m_tool == Tool::Draw) return;
     const int px = int(to_page_x(x)), py = int(to_page_y(y));
+    // On the half of the selected area's edge grip that lies just OUTSIDE its
+    // box, the press is the start of a resize: keep the selection. (s26: the
+    // sweep found it deselected, so the drag that followed had nothing to
+    // resize.) Inside the box a press still picks the word under it -- the
+    // first word of every line sits on the left grip.
+    if (grip_edges(x, y) && !m_page->areas[std::size_t(m_area)].box.contains(px, py)) return;
 
     for (std::size_t ai = 0; ai < m_page->areas.size(); ++ai) {
         const auto& a = m_page->areas[ai];
@@ -308,16 +318,7 @@ void PageView::on_drag_begin(double x, double y) {
     if (m_tool == Tool::Draw) { m_dragging = true; return; }
     if (m_area < 0 || m_area >= int(m_page->areas.size())) return;
 
-    double s, ox, oy;
-    if (!layout(s, ox, oy)) return;
-    const auto& b = m_page->areas[std::size_t(m_area)].box;
-    const double l = ox + s * b.x0, r = ox + s * b.x1, t = oy + s * b.y0, btm = oy + s * b.y1;
-    const bool in_y = y > t - kGrip && y < btm + kGrip;
-    const bool in_x = x > l - kGrip && x < r + kGrip;
-    if (in_y && std::abs(x - l) < kGrip)   m_edges |= 1;
-    if (in_y && std::abs(x - r) < kGrip)   m_edges |= 2;
-    if (in_x && std::abs(y - t) < kGrip)   m_edges |= 4;
-    if (in_x && std::abs(y - btm) < kGrip) m_edges |= 8;
+    m_edges = grip_edges(x, y);
     m_dragging = m_edges != 0;
     if (m_dragging) m_drag->set_state(Gtk::EventSequenceState::CLAIMED);
 }
@@ -347,10 +348,11 @@ core::Rect PageView::drag_rect() const {
     // Normalise and keep it on the page.
     if (r.x0 > r.x1) std::swap(r.x0, r.x1);
     if (r.y0 > r.y1) std::swap(r.y0, r.y1);
-    r.x0 = std::clamp(r.x0, 0, m_page->crop.width());
-    r.x1 = std::clamp(r.x1, 0, m_page->crop.width());
-    r.y0 = std::clamp(r.y0, 0, m_page->crop.height());
-    r.y1 = std::clamp(r.y1, 0, m_page->crop.height());
+    const core::Size2i ps = core::page_size(*m_page);
+    r.x0 = std::clamp(r.x0, 0, ps.w);
+    r.x1 = std::clamp(r.x1, 0, ps.w);
+    r.y0 = std::clamp(r.y0, 0, ps.h);
+    r.y1 = std::clamp(r.y1, 0, ps.h);
     return r;
 }
 
@@ -365,6 +367,41 @@ void PageView::on_drag_end(double dx, double dy) {
     if (r.width() < 8 || r.height() < 8) return;   // a click, not a drag
     if (edges) signal_area_resized.emit(m_area, r);
     else       signal_area_drawn.emit(r);
+}
+
+// Which edges of the selected area (view px x, y) is on: bit 1 left, 2 right,
+// 4 top, 8 bottom; 0 when none or nothing is selected.
+int PageView::grip_edges(double x, double y) const {
+    if (!m_page || m_area < 0 || m_area >= int(m_page->areas.size())) return 0;
+    double s, ox, oy;
+    if (!layout(s, ox, oy)) return 0;
+    const auto& b = m_page->areas[std::size_t(m_area)].box;
+    const double l = ox + s * b.x0, r = ox + s * b.x1, t = oy + s * b.y0, btm = oy + s * b.y1;
+    const bool in_y = y > t - kGrip && y < btm + kGrip;
+    const bool in_x = x > l - kGrip && x < r + kGrip;
+    int e = 0;
+    if (in_y && std::abs(x - l) < kGrip)   e |= 1;
+    if (in_y && std::abs(x - r) < kGrip)   e |= 2;
+    if (in_x && std::abs(y - t) < kGrip)   e |= 4;
+    if (in_x && std::abs(y - btm) < kGrip) e |= 8;
+    return e;
+}
+
+// -- the sweep's hands (s26) --------------------------------------------------------
+
+void PageView::poke_drag(double x0, double y0, double x1, double y1) {
+    on_press(1, x0, y0);
+    on_drag_begin(x0, y0);
+    on_drag_update((x1 - x0) / 2, (y1 - y0) / 2);
+    on_drag_end(x1 - x0, y1 - y0);
+}
+
+bool PageView::page_to_view(double px, double py, double& x, double& y) const {
+    double s, ox, oy;
+    if (!layout(s, ox, oy)) return false;
+    x = ox + s * px;
+    y = oy + s * py;
+    return true;
 }
 
 }  // namespace optik

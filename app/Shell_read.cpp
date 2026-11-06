@@ -6,6 +6,7 @@
 #include "Shell.hpp"
 
 #include "Log.hpp"
+#include "core/PageOps.hpp"
 #include "core/Picture.hpp"
 #include "core/Reading.hpp"
 
@@ -147,59 +148,84 @@ void Shell::read_area(int area, const core::Rect& box, bool new_area) {
             if (!reading->ok) { say("Could not read the area: " + reading->why); return; }
             if (!m_book.page(reading->page_id)) return;
             // A drawn area joins the step that reads it, so one undo takes both.
+            bool landed = false;
             step(new_area ? "Draw area" : "Read area again", [&](core::Edit& e) {
                 core::Page& pg = e.page(reading->page_id);
+                core::Reading r = *reading;
                 if (new_area) {
+                    // Appended now: its index is where it lands, whatever was
+                    // added or deleted while it was read.
                     ocr::Area a;
                     a.kind = ocr::Kind::Text;
-                    a.box = reading->area_box;
+                    a.box = r.area_box;
                     a.user = true;
                     pg.areas.push_back(a);
                     pg.read = true;
+                    r.area = int(pg.areas.size()) - 1;
+                    r.area_was = r.area_box;
                 }
-                core::land(e, *reading);
+                landed = core::land(e, r);
             });
-            if (reading->paras.empty()) say("Nothing readable in that area.");
+            if (!landed) say("The area changed while it was being read; its reading was dropped.");
+            else if (reading->paras.empty()) say("Nothing readable in that area.");
         };
     });
 }
 
+// Pictures are cached by how the page LOOKS (core::look_key: id, crop, turn),
+// so a re-cut or turned page -- or the undo of one -- is drawn afresh (s26).
 void Shell::request_picture(const std::string& id) {
     const core::Page* p = m_book.page(id);
-    if (!p || m_pictures_pending.count(id)) return;
-    m_pictures_pending.insert(id);
+    if (!p) return;
+    const std::string key = core::look_key(*p);
+    if (m_pictures.count(key) || m_pictures_pending.count(key)) return;
+    m_pictures_pending.insert(key);
     const std::string path = m_book.scan_path(p->scan_id);
     const core::Rect crop = p->crop;
-    m_jobs.submit([this, id, path, crop](ocr::Engine&) -> core::Jobs::Landing {
+    const int turns = p->turns;
+    m_jobs.submit([this, key, path, crop, turns](ocr::Engine&) -> core::Jobs::Landing {
         auto pic = std::make_shared<core::Picture>();
-        core::load_picture(path, crop, kViewSide, *pic);
-        return [this, id, pic] {
-            m_pictures_pending.erase(id);
+        core::load_picture(path, crop, turns, kViewSide, *pic);
+        return [this, key, pic] {
+            m_pictures_pending.erase(key);
             if (!pic->valid()) { say("Could not show the scan for this page."); return; }
-            m_pictures[id] = pic;
-            m_picture_order.push_back(id);
+            m_pictures[key] = pic;
+            m_picture_order.push_back(key);
+            const core::Page* cur = current();
+            const std::string shown = cur ? core::look_key(*cur) : std::string();
             while (m_picture_order.size() > kKeepPictures) {
                 const std::string old = m_picture_order.front();
                 m_picture_order.erase(m_picture_order.begin());
-                if (old != m_page_id) m_pictures.erase(old);
+                if (old != shown) m_pictures.erase(old);
             }
-            if (id == m_page_id) m_view.set_picture(id, pic);
+            if (key == shown) m_view.set_picture(key, pic);
         };
     });
+}
+
+// The page's picture into the view: from the cache, or asked for.
+void Shell::show_picture() {
+    const core::Page* p = current();
+    if (!p) return;
+    auto it = m_pictures.find(core::look_key(*p));
+    if (it != m_pictures.end()) m_view.set_picture(it->first, it->second);
+    else request_picture(p->id);
 }
 
 void Shell::request_thumbs() {
     for (const auto& p : m_book.pages()) {
-        if (m_pages.has_thumb(p.id) || m_thumbs_pending.count(p.id)) continue;
-        m_thumbs_pending.insert(p.id);
+        const std::string key = core::look_key(p);
+        if (m_pages.has_thumb(p.id, key) || m_thumbs_pending.count(key)) continue;
+        m_thumbs_pending.insert(key);
         const std::string id = p.id, path = m_book.scan_path(p.scan_id);
         const core::Rect crop = p.crop;
-        m_jobs.submit([this, id, path, crop](ocr::Engine&) -> core::Jobs::Landing {
+        const int turns = p.turns;
+        m_jobs.submit([this, id, key, path, crop, turns](ocr::Engine&) -> core::Jobs::Landing {
             auto pic = std::make_shared<core::Picture>();
-            core::load_picture(path, crop, PagesPanel::kThumbSide * 2, *pic);
-            return [this, id, pic] {
-                m_thumbs_pending.erase(id);
-                m_pages.set_thumb(id, *pic);
+            core::load_picture(path, crop, turns, PagesPanel::kThumbSide * 2, *pic);
+            return [this, id, key, pic] {
+                m_thumbs_pending.erase(key);
+                m_pages.set_thumb(id, key, *pic);
             };
         });
     }

@@ -42,6 +42,14 @@ public:
     bool read_area(const std::string& image_path, const Rect& crop, const Rect& area,
                    std::vector<Para>& out, std::string* why = nullptr);
 
+    // The same on a TURNED page (s26): the crop is cut from the scan, then turned
+    // `turns` quarter turns clockwise (0..3), and that is the page -- every box
+    // in and out is in the turned page's space.
+    bool read_page(const std::string& image_path, const Rect& crop, int turns,
+                   std::vector<Area>& out, std::string* why = nullptr);
+    bool read_area(const std::string& image_path, const Rect& crop, int turns, const Rect& area,
+                   std::vector<Para>& out, std::string* why = nullptr);
+
     static std::string version();
 
 private:

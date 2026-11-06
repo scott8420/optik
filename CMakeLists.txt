@@ -23,8 +23,17 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 add_compile_options(-Wall -Wextra)
 
+# The sweep's build (s26): AddressSanitizer + UBSan on every target, so an
+# out-of-bounds read is a red line and not "harmless garbage" (CANON s23).
+#   cmake -B build-asan -DOPTIK_SANITIZE=ON     (scripts/sweep.sh does this)
+option(OPTIK_SANITIZE "Build with ASan + UBSan" OFF)
+if(OPTIK_SANITIZE)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
 # The build stamp the About line and the selftest print. Bumped per session.
-set(OPTIK_BUILD "s25")
+set(OPTIK_BUILD "s26")
 set(OPTIK_APP_ID "io.github.example.Optik")
 
 find_package(PkgConfig REQUIRED)
@@ -57,6 +66,8 @@ add_library(optik_core STATIC
     core/Reading.cpp
     core/Passes.cpp
     core/Recent.cpp
+    core/Audit.cpp
+    core/PageOps.cpp
     core/Picture.cpp
     core/Export.cpp
 )
@@ -72,6 +83,8 @@ add_executable(optik_selftest
     tests/selftest_core.cpp
     tests/selftest_passes.cpp
     tests/selftest_recent.cpp
+    tests/selftest_audit.cpp
+    tests/selftest_pageops.cpp
 )
 target_include_directories(optik_selftest PRIVATE tests)
 target_link_libraries(optik_selftest PRIVATE optik_core)

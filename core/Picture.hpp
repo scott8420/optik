@@ -14,6 +14,7 @@ namespace optik::core {
 struct Picture {
     int width = 0, height = 0;            // after scaling
     double scale = 1.0;                   // picture px per page px
+    int src_w = 0, src_h = 0;             // the page (crop, turned) before scaling (s26)
     std::vector<std::uint32_t> px;        // width * height, ARGB32
     bool valid() const { return width > 0 && height > 0; }
 };
@@ -21,5 +22,7 @@ struct Picture {
 // Decode `path`, cut `crop` (empty = whole), scale so the longer side is at most
 // `max_side` (0 = no scaling; never enlarged).
 bool load_picture(const std::string& path, const ocr::Rect& crop, int max_side, Picture& out);
+// ...turned `turns` quarter turns clockwise after the cut, as the engine reads it (s26).
+bool load_picture(const std::string& path, const ocr::Rect& crop, int turns, int max_side, Picture& out);
 
 }  // namespace optik::core

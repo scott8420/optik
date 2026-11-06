@@ -7,6 +7,10 @@
 namespace optik::core {
 
 bool load_picture(const std::string& path, const ocr::Rect& crop, int max_side, Picture& out) {
+    return load_picture(path, crop, 0, max_side, out);
+}
+
+bool load_picture(const std::string& path, const ocr::Rect& crop, int turns, int max_side, Picture& out) {
     out = Picture{};
     Pix* full = pixRead(path.c_str());
     if (!full) return false;
@@ -16,6 +20,12 @@ bool load_picture(const std::string& path, const ocr::Rect& crop, int max_side, 
         part = pixClipRectangle(full, b, nullptr);
         boxDestroy(&b);
         if (!part) { pixDestroy(&full); return false; }
+    }
+    if ((turns & 3) != 0) {
+        Pix* turned = pixRotateOrth(part, turns & 3);
+        if (part != full) pixDestroy(&part);
+        if (!turned) { pixDestroy(&full); return false; }
+        part = turned;
     }
     const int w = int(pixGetWidth(part)), h = int(pixGetHeight(part));
     double s = 1.0;
@@ -31,6 +41,8 @@ bool load_picture(const std::string& path, const ocr::Rect& crop, int max_side, 
         out.width  = int(pixGetWidth(rgb));
         out.height = int(pixGetHeight(rgb));
         out.scale  = w > 0 ? double(out.width) / w : 1.0;
+        out.src_w  = w;
+        out.src_h  = h;
         out.px.resize(std::size_t(out.width) * out.height);
         const l_uint32* data = pixGetData(rgb);
         const int wpl = pixGetWpl(rgb);

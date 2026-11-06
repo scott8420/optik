@@ -12,6 +12,8 @@
 //   Shell_files.cpp    files: open, new from scans, save, export, book settings
 //   Shell_read.cpp     reading: the pool, pictures, read page / all / area
 //   Shell_verify.cpp   proofing: next to check, accept, text edits, areas
+//   Shell_pages.cpp    pages: move, delete, turn, re-cut (s26)
+//   Sweep.cpp          the app driving itself under Xvfb (s26)
 
 #include "PagesPanel.hpp"
 #include "PageView.hpp"
@@ -35,6 +37,10 @@
 namespace optik {
 
 class App;
+class RecutWindow;
+
+// The sweep's verdict for main(): -1 no sweep ran, 0 clean, 1 something failed.
+int sweep_status();
 
 class Shell : public Gtk::ApplicationWindow {
 public:
@@ -43,6 +49,7 @@ public:
 
     void open_path(const std::string& path);                 // files: book or scans folder
     void reopen_last();                                      // files: a plain start (s25)
+    void start_sweep();                                      // sweep (Sweep.cpp, s26)
 
 private:
     // -- zones (Shell.cpp)
@@ -81,6 +88,7 @@ private:
     void read_area(int area, const core::Rect& box, bool new_area);                 // reading
     void request_picture(const std::string& page_id);       // reading: page view
     void request_thumbs();                                   // reading: pages pane
+    void show_picture();                                     // reading: the view's picture (s26)
     void batch_begin(const std::string& label, int total, bool dialog = false);  // reading: progress
     void refresh_progress_dialog();                          // reading: the progress window
     void batch_tick();                                       // reading
@@ -96,6 +104,25 @@ private:
     void on_area_drawn(const core::Rect& r);                 // areas
     void on_area_resized(int area, const core::Rect& r);     // areas
 
+    // -- pages (Shell_pages.cpp, s26)
+    void page_move(int delta);                               // pages: Alt+Up / Alt+Down
+    void page_delete();                                      // pages
+    void page_rotate(int quarter_turns);                     // pages: Ctrl+] / Ctrl+[
+    void on_recut();                                         // handler: Re-cut the Scan
+    void recut_scan(std::string scan_id, core::Rect full, int cut);   // pages: the window's answer
+
+    // -- the sweep (Sweep.cpp, s26): drives every verb and pokes the canvas
+    struct Sweep;
+    std::shared_ptr<Sweep> m_sweep;
+    bool sweep_tick();                                       // sweep: one beat
+    bool sweep_settled() const;                              // sweep
+    void sweep_check(const std::string& what);               // sweep
+    void sweep_plan_page(int index);                         // sweep
+    void sweep_plan_canvas();                                // sweep
+    void sweep_plan_pages();                                 // sweep: the page verbs (s26)
+    void sweep_shot(const std::string& name);                // sweep: window -> PNG
+    void sweep_finish();                                     // sweep
+
     // -- state
     core::Book    m_book;
     bool          m_has_book = false;
@@ -104,14 +131,15 @@ private:
     core::Recent  m_recent;                                  // the app's memory, not the book's
     Glib::RefPtr<Gio::Menu> m_recent_menu;
     std::unique_ptr<Gtk::Window> m_about;                   // made once, hidden on close
+    std::unique_ptr<RecutWindow> m_recut;                   // made once, hidden on close (s26)
     Glib::Dispatcher m_dispatch;
 
     std::string m_page_id;
     WordRef     m_word;
     int         m_area = -1;
-    std::map<std::string, std::shared_ptr<const core::Picture>> m_pictures;   // recent page pictures
+    std::map<std::string, std::shared_ptr<const core::Picture>> m_pictures;   // recent, by core::look_key
     std::vector<std::string> m_picture_order;
-    std::set<std::string> m_pictures_pending, m_thumbs_pending;
+    std::set<std::string> m_pictures_pending, m_thumbs_pending;   // by core::look_key (s26)
 
     std::string m_batch_label;
     int m_batch_total = 0, m_batch_done = 0;

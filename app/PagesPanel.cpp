@@ -111,8 +111,9 @@ void PagesPanel::select(int index) {
     m_quiet = false;
 }
 
-void PagesPanel::set_thumb(const std::string& id, const core::Picture& pic) {
+void PagesPanel::set_thumb(const std::string& id, const std::string& key, const core::Picture& pic) {
     if (!pic.valid()) return;
+    m_thumb_keys[id] = key;
     auto surf = Cairo::ImageSurface::create(Cairo::Surface::Format::ARGB32, pic.width, pic.height);
     surf->flush();
     unsigned char* dst = surf->get_data();

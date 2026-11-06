@@ -25,8 +25,13 @@ public:
     void rebuild(const core::Book& book);             // page list changed
     void refresh(const core::Book& book, const std::string& page_id);
     void select(int index);                           // no signal
-    void set_thumb(const std::string& page_id, const core::Picture& pic);
-    bool has_thumb(const std::string& page_id) const { return m_thumbs.count(page_id) > 0; }
+    // Keyed by core::look_key (s26): a re-cut or turned page's old thumb is stale.
+    void set_thumb(const std::string& page_id, const std::string& look_key, const core::Picture& pic);
+    bool has_thumb(const std::string& page_id, const std::string& look_key) const {
+        auto it = m_thumb_keys.find(page_id);
+        return it != m_thumb_keys.end() && it->second == look_key;
+    }
+    std::size_t rows() const { return m_rows.size(); }   // the sweep: the pane matches the book
 
     sigc::signal<void(int)> signal_page_selected;
 
@@ -39,6 +44,7 @@ private:
     widgets::ListBox m_list;
     std::vector<std::unique_ptr<Row>> m_rows;
     std::map<std::string, Cairo::RefPtr<Cairo::ImageSurface>> m_thumbs;
+    std::map<std::string, std::string> m_thumb_keys;
     bool m_quiet = false;
 };
 

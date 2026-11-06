@@ -170,6 +170,7 @@ Status Book::open(const std::string& folder, Book& out) {
             p.crop     = rect_in(jp.at("crop"));
             p.concerns = jp.value("concerns", 0u);
             p.read     = jp.value("read", false);
+            p.turns    = jp.value("turns", 0) & 3;      // s26; absent = upright
             for (const auto& ja : jp.value("areas", json::array())) p.areas.push_back(area_in(ja));
             b.m_pages.push_back(std::move(p));
         }
@@ -186,9 +187,11 @@ Status Book::save() const {
     for (const auto& p : m_pages) {
         json areas = json::array();
         for (const auto& a : p.areas) areas.push_back(area_out(a));
-        pages.push_back({{"id", p.id}, {"scan", p.scan_id}, {"half", half_name(p.half)},
-                         {"crop", rect_out(p.crop)}, {"concerns", p.concerns},
-                         {"read", p.read}, {"areas", areas}});
+        json jp = {{"id", p.id}, {"scan", p.scan_id}, {"half", half_name(p.half)},
+                   {"crop", rect_out(p.crop)}, {"concerns", p.concerns},
+                   {"read", p.read}, {"areas", areas}};
+        if (p.turns) jp["turns"] = p.turns;
+        pages.push_back(std::move(jp));
     }
     const json j = {{"schema", kSchema}, {"title", m_meta.title},
                     {"settings", settings_out(m_meta.settings)}, {"next_id", m_next_id},

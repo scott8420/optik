@@ -43,6 +43,8 @@ struct Page {
     Rect        crop;          // on the scan
     unsigned    concerns = 0;  // split:: concerns, for "check this split"
     bool        read = false;  // recognised at least once
+    int         turns = 0;     // quarter turns clockwise after the crop, 0..3 (s26);
+                               // the page -- and every box on it -- is the turned crop
     std::vector<ocr::Area> areas;
     bool operator==(const Page&) const = default;
 };

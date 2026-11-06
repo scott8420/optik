@@ -3,6 +3,7 @@
 
 #include "App.hpp"
 #include "Log.hpp"
+#include "RecutWindow.hpp"
 
 #include <giomm/menu.h>
 #include <glibmm/main.h>
@@ -77,38 +78,53 @@ void Shell::build_header() {
     menu->set_icon_name("open-menu-symbolic");
     menu->set_tooltip_text("Optik's menu");
     auto model = Gio::Menu::create();
-
-    auto files = Gio::Menu::create();
-    files->append("Open…", "win.open");
-    files->append("New from Scans…", "win.new");
+    // s26 (Scott: "the hamburger menu is long ... could run off the screen"):
+    // the verbs live in submenus by subject; only Undo / Redo, Book Settings,
+    // About and Quit stay at the top. Eleven rows, whatever the screen.
+    auto file = Gio::Menu::create();
+    auto file_open = Gio::Menu::create();
+    file_open->append("Open…", "win.open");
+    file_open->append("New from Scans…", "win.new");
     m_recent_menu = Gio::Menu::create();
-    files->append_submenu("Recent Books", m_recent_menu);
-    files->append("Save", "win.save");
-    files->append("Save As…", "win.save-as");
-    files->append("Export…", "win.export");
-    model->append_section(files);
-
-    auto edit = Gio::Menu::create();
-    edit->append("Undo", "win.undo");
-    edit->append("Redo", "win.redo");
-    model->append_section(edit);
+    file_open->append_submenu("Recent Books", m_recent_menu);
+    file->append_section(file_open);
+    auto file_save = Gio::Menu::create();
+    file_save->append("Save", "win.save");
+    file_save->append("Save As…", "win.save-as");
+    file_save->append("Export…", "win.export");
+    file->append_section(file_save);
 
     auto read = Gio::Menu::create();
     read->append("Read Page", "win.read-page");
     read->append("Read All (pages not read yet)", "win.read-all");
     read->append("Rescan Book (read every page again)", "win.rescan");
-    model->append_section(read);
 
     auto proof = Gio::Menu::create();
     proof->append("Next Word to Check", "win.next");
     proof->append("Accept Word", "win.accept");
-    proof->append("Next Page", "win.page-next");
-    proof->append("Previous Page", "win.page-prev");
-    model->append_section(proof);
+    auto paging = Gio::Menu::create();
+    paging->append("Next Page", "win.page-next");
+    paging->append("Previous Page", "win.page-prev");
+    proof->append_section(paging);
 
-    auto areas = Gio::Menu::create();
-    areas->append("Draw Area", "win.draw");
-    auto am = Gio::Menu::create();
+    auto page = Gio::Menu::create();
+    auto page_order = Gio::Menu::create();
+    page_order->append("Move Page Up", "win.page-up");
+    page_order->append("Move Page Down", "win.page-down");
+    page->append_section(page_order);
+    auto page_turn = Gio::Menu::create();
+    page_turn->append("Turn Clockwise", "win.rotate-right");
+    page_turn->append("Turn Anticlockwise", "win.rotate-left");
+    page->append_section(page_turn);
+    auto page_cut = Gio::Menu::create();
+    page_cut->append("Re-cut the Scan…", "win.recut");
+    page_cut->append("Delete Page", "win.page-delete");
+    page->append_section(page_cut);
+
+    auto area = Gio::Menu::create();
+    auto area_draw = Gio::Menu::create();
+    area_draw->append("Draw Area", "win.draw");
+    area->append_section(area_draw);
     auto kinds = Gio::Menu::create();
     kinds->append("Text", "win.area-kind::text");
     kinds->append("Heading", "win.area-kind::heading");
@@ -116,23 +132,35 @@ void Shell::build_header() {
     kinds->append("Running head", "win.area-kind::header");
     kinds->append("Folio / footer", "win.area-kind::footer");
     kinds->append("Ignore", "win.area-kind::ignore");
-    am->append_section(kinds);
-    auto acts = Gio::Menu::create();
-    acts->append("Read Area Again", "win.area-read");
-    acts->append("Delete Area   Del", "win.area-delete");
-    am->append_section(acts);
-    areas->append_submenu("Selected Area", am);
-    model->append_section(areas);
+    area->append_section("Selected area is", kinds);
+    auto area_acts = Gio::Menu::create();
+    area_acts->append("Read Area Again", "win.area-read");
+    area_acts->append("Delete Area   Del", "win.area-delete");
+    area->append_section(area_acts);
 
-    auto book = Gio::Menu::create();
-    book->append("Book Settings…", "win.book-settings");
     auto view = Gio::Menu::create();
     view->append("Fit Page", "win.fit-page");
     view->append("Fit Width", "win.fit-width");
     view->append("Zoom In  (or Ctrl+wheel)", "win.zoom-in");
     view->append("Zoom Out", "win.zoom-out");
-    book->append_submenu("View", view);
-    model->append_section(book);
+
+    auto top_edit = Gio::Menu::create();
+    top_edit->append("Undo", "win.undo");
+    top_edit->append("Redo", "win.redo");
+    model->append_section(top_edit);
+
+    auto top_subjects = Gio::Menu::create();
+    top_subjects->append_submenu("File", file);
+    top_subjects->append_submenu("Read", read);
+    top_subjects->append_submenu("Proof", proof);
+    top_subjects->append_submenu("Page", page);
+    top_subjects->append_submenu("Area", area);
+    top_subjects->append_submenu("View", view);
+    model->append_section(top_subjects);
+
+    auto top_book = Gio::Menu::create();
+    top_book->append("Book Settings…", "win.book-settings");
+    model->append_section(top_book);
 
     auto app = Gio::Menu::create();
     app->append("About Optik", "win.about");
@@ -253,6 +281,12 @@ void Shell::build_actions(App& app) {
             read_area(m_area, p->areas[std::size_t(m_area)].box, false);
     });
     add("area-delete", [this] { delete_area(); });
+    add("page-up",      [this] { page_move(-1); });
+    add("page-down",    [this] { page_move(+1); });
+    add("page-delete",  [this] { page_delete(); });
+    add("rotate-right", [this] { page_rotate(+1); });
+    add("rotate-left",  [this] { page_rotate(-1); });
+    add("recut",        [this] { on_recut(); });
     add("fit-page",  [this] { m_view.set_fit(PageView::Fit::Page); });
     add("fit-width", [this] { m_view.set_fit(PageView::Fit::Width); });
     add("zoom-in",   [this] { m_view.zoom_by(1.25); });
@@ -285,6 +319,10 @@ void Shell::build_actions(App& app) {
     app.set_accels_for_action("win.export", {"<Control>e"});
     app.set_accels_for_action("win.read-page", {"<Control>r"});
     app.set_accels_for_action("win.read-all", {"<Control><Shift>r"});
+    app.set_accels_for_action("win.page-up", {"<Alt>Up"});
+    app.set_accels_for_action("win.page-down", {"<Alt>Down"});
+    app.set_accels_for_action("win.rotate-right", {"<Control>bracketright"});
+    app.set_accels_for_action("win.rotate-left", {"<Control>bracketleft"});
     app.set_accels_for_action("win.fit-page", {"<Control>0"});
     app.set_accels_for_action("win.fit-width", {"<Control>1"});
     app.set_accels_for_action("win.zoom-in", {"<Control>plus", "<Control>equal", "<Control>KP_Add"});
@@ -376,10 +414,12 @@ void Shell::refresh_all() {
 
 void Shell::refresh_page(const std::string& id) {
     m_pages.refresh(m_book, id);
+    request_thumbs();                                   // a re-cut or turned page (s26)
     if (id != m_page_id) return;
     const core::Page* p = current();
     m_view.show(&m_book, p);
     m_text.show(&m_book, p);
+    show_picture();
     if (p && m_word.valid() && word_at(*p, m_word)) {
         m_view.set_word(m_word);
         m_text.set_word(m_word, false);
@@ -407,9 +447,7 @@ void Shell::go_to(int index) {
     m_pages.select(index);
     m_view.show(&m_book, current());
     m_text.show(&m_book, current());
-    auto it = m_pictures.find(id);
-    if (it != m_pictures.end()) m_view.set_picture(id, it->second);
-    else request_picture(id);
+    show_picture();
     refresh_actions();
     refresh_status();
 }
@@ -467,11 +505,18 @@ void Shell::refresh_actions() {
     en("book-settings", m_has_book);
     en("save-as", m_has_book);
     en("next", m_has_book);
-    en("accept", m_word.valid());
+    en("accept", p && m_word.valid() && word_at(*p, m_word));
     en("area-kind", area);
     en("area-read", area);
     en("area-delete", area);
     en("cancel", m_batch_total > 0);
+    const int at = p ? m_book.index_of(p->id) : -1;
+    en("page-up", p && at > 0);
+    en("page-down", p && at + 1 < int(m_book.pages().size()));
+    en("page-delete", p != nullptr);
+    en("rotate-right", p != nullptr);
+    en("rotate-left", p != nullptr);
+    en("recut", p != nullptr);
 }
 
 void Shell::say(const std::string& msg) {

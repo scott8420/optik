@@ -14,6 +14,8 @@ void scan_tests();
 void core_tests();
 void passes_tests();
 void recent_tests();
+void audit_tests();
+void pageops_tests();
 
 namespace optik::test {
 static int g_pass = 0, g_fail = 0;
@@ -34,6 +36,8 @@ int main() {
     core_tests();
     passes_tests();
     recent_tests();
+    audit_tests();
+    pageops_tests();
     std::cout << "---------------------------------\n";
     std::cout << optik::test::passes() << " pass / " << optik::test::failures() << " fail\n";
     return optik::test::failures() == 0 ? 0 : 1;

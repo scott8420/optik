@@ -15,6 +15,9 @@ proofs what is uncertain, and the book exports to ODT for LibreOffice Writer.
   **Draw Area** to add one; **Area** menu or Del to retype or remove it.
 - **The text** -- line for line as printed, editable; F4 goes to the next word
   to check, Ctrl+Enter accepts it.
+- **The pages** -- move a page (Alt+Up / Alt+Down), turn it a quarter
+  (Ctrl+] / Ctrl+[), delete it, or **Re-cut the Scan…**: one page or two, the
+  cut dragged to the gutter. A turned or re-cut page is read again.
 - **Undo** -- every change, Ctrl+Z / Ctrl+Shift+Z, from anywhere.
 - **Export** -- ODT (Text body + Heading 1, for Writer to restyle) or plain
   text. Running heads and folios left out; paragraphs broken by the page turn
@@ -26,6 +29,18 @@ proofs what is uncertain, and the book exports to ODT for LibreOffice Writer.
 
 Dependencies are listed at the top of `build.sh`. Run `build/optik <folder>`
 to open a book or make one from a folder of scans.
+
+## The sweep (s26)
+
+    scripts/sweep.sh            (from the workspace root; needs Xvfb)
+
+Builds with ASan + UBSan in `optik/build-asan`, runs the selftest there, then
+opens a scratch book under Xvfb and drives the window itself: every menu verb,
+the canvas (clicks, edge drags, drawn areas, at two zooms, on a turned page),
+the page verbs and the Re-cut window, and the races between a read in flight
+and a change. The book is audited after every step; undo to the start, redo
+to the end and a save / open must agree. `--plain` skips the sanitizers;
+`scripts/sweep.sh <book.optik>` sweeps a copy of one of your books.
 
 ## Layout
 

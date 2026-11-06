@@ -46,7 +46,7 @@ public:
 
     // `page` must outlive the next call; the Shell re-shows after every change.
     void show(const core::Book* book, const core::Page* page);
-    void set_picture(const std::string& page_id, std::shared_ptr<const core::Picture> pic);
+    void set_picture(const std::string& look_key, std::shared_ptr<const core::Picture> pic);   // core::look_key
     void set_word(const WordRef& w);
     void set_area(int area);
     void set_tool(Tool t);
@@ -56,6 +56,12 @@ public:
     void   zoom_by(double factor);              // about the view's centre
     double zoom() const;                         // view px per page px, now
     sigc::signal<void()> signal_zoom_changed;
+
+    // The sweep's hands (s26, app/Sweep.cpp): the very handlers the pointer
+    // gestures call, in the order GTK calls them (a drag starts with a press).
+    void poke_click(double x, double y) { on_press(1, x, y); }
+    void poke_drag(double x0, double y0, double x1, double y1);
+    bool page_to_view(double px, double py, double& x, double& y) const;   // false: no layout
 
     sigc::signal<void(WordRef)>          signal_word_clicked;
     sigc::signal<void(int)>              signal_area_selected;   // -1 = none
@@ -76,10 +82,11 @@ private:
     double to_page_x(double x) const;
     double to_page_y(double y) const;
     core::Rect drag_rect() const;
+    int    grip_edges(double x, double y) const;   // the selected area's edges here
 
     const core::Book* m_book = nullptr;
     const core::Page* m_page = nullptr;
-    std::string m_pic_page;
+    std::string m_pic_key;                      // the look the picture was made for (s26)
     std::shared_ptr<const core::Picture> m_pic;
     Cairo::RefPtr<Cairo::ImageSurface>   m_surface;
     WordRef m_word;

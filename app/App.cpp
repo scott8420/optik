@@ -8,6 +8,8 @@
 #include <gtkmm/icontheme.h>
 #include <gtkmm/settings.h>
 
+#include <cstdlib>
+
 namespace optik {
 
 Glib::RefPtr<App> App::create() {
@@ -40,12 +42,14 @@ void App::on_activate() {
     Shell& s = shell();
     s.present();
     s.reopen_last();
+    if (std::getenv("OPTIK_SWEEP")) s.start_sweep();
 }
 
 void App::on_open(const type_vec_files& files, const Glib::ustring&) {
     Shell& s = shell();
     s.present();
     if (!files.empty()) s.open_path(files[0]->get_path());
+    if (std::getenv("OPTIK_SWEEP")) s.start_sweep();   // s26: scripts/sweep.sh
 }
 
 }  // namespace optik
