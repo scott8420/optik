@@ -3,6 +3,7 @@
 // library that feeds the engine (Leptonica), so what the author sees is what
 // was read. Thread-safe; the app calls it from a worker. GTK-free: the pixels
 // are Cairo's ARGB32 layout (native-endian 0xAARRGGBB) in a plain vector.
+#include "ocr/Condition.hpp"
 #include "ocr/Layout.hpp"
 
 #include <cstdint>
@@ -24,5 +25,9 @@ struct Picture {
 bool load_picture(const std::string& path, const ocr::Rect& crop, int max_side, Picture& out);
 // ...turned `turns` quarter turns clockwise after the cut, as the engine reads it (s26).
 bool load_picture(const std::string& path, const ocr::Rect& crop, int turns, int max_side, Picture& out);
+// ...through the page's whole look (s29, ocr/Condition): toned and straightened
+// as the engine read it. Conditioned AFTER scaling (fast; the straightening
+// turns about the centre, so every box lands where the engine put it).
+bool load_picture(const std::string& path, const ocr::Look& look, int max_side, Picture& out);
 
 }  // namespace optik::core

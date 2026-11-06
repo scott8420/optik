@@ -45,6 +45,8 @@ struct Page {
     bool        read = false;  // recognised at least once
     int         turns = 0;     // quarter turns clockwise after the crop, 0..3 (s26);
                                // the page -- and every box on it -- is the turned crop
+    double      skew = 0.0;    // degrees the page was straightened by when read (s29,
+                               // ocr/Condition); its boxes are in the straightened page
     std::vector<ocr::Area> areas;
     bool operator==(const Page&) const = default;
 };
@@ -63,6 +65,10 @@ struct Settings {
     bool small_caps         = true;  // read: caps headings upper-cased, chapter openers doubted
     bool mark_italic        = true;  // read: italic words (measured) marked to check (s27)
     bool check_spelling     = true;  // read: words not in the dictionary marked to check (s27)
+    // Condition, phase 0 (s29): the page before the engine (and on the screen).
+    bool deskew             = true;  // read: measure the page's skew, read it straightened
+    bool decolour           = false; // the page in grey
+    bool level              = true;  // the paper evened to white, the ink to black
     bool operator==(const Settings&) const = default;
 };
 

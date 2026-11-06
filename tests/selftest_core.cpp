@@ -249,14 +249,14 @@ void core_tests() {
     {
         core::Picture pic;
         check("picture: decodes a page's crop, scaled to fit",
-              core::load_picture(data("spread.png"), {1060, 0, 2060, 1400}, 700, pic) &&
+              core::load_picture(data("spread.png"), core::Rect{1060, 0, 2060, 1400}, 700, pic) &&
               pic.height == 700 && pic.width == 500 && std::abs(pic.scale - 0.5) < 1e-6,
               std::to_string(pic.width) + "x" + std::to_string(pic.height));
         check("picture: white paper is white, opaque",
               pic.valid() && pic.px[0] == 0xFFFFFFFFu);
         check("picture: never enlarged",
-              core::load_picture(data("page_left.png"), {}, 4000, pic) && pic.width == 1000);
-        check("picture: a missing file is false", !core::load_picture(data("nope.png"), {}, 0, pic));
+              core::load_picture(data("page_left.png"), core::Rect{}, 4000, pic) && pic.width == 1000);
+        check("picture: a missing file is false", !core::load_picture(data("nope.png"), core::Rect{}, 0, pic));
         const fs::path dir = temp_dir("copy");
         const auto a = core::copy_scans(dir.string(), {data("page_left.png")});
         const auto b = core::copy_scans(dir.string(), {data("page_left.png")});
@@ -297,7 +297,7 @@ void core_tests() {
         if (ready) {
             std::vector<ocr::Area> areas;
             check("ocr: reads a whole page",
-                  eng.read_page(data("page_left.png"), {}, areas, &why) && !areas.empty(), why);
+                  eng.read_page(data("page_left.png"), ocr::Rect{}, areas, &why) && !areas.empty(), why);
             core::Page p;
             p.areas = areas;
             core::mark_running_heads(p.areas, 1400);
@@ -321,20 +321,20 @@ void core_tests() {
             // Re-read one rectangle: the first body line only.
             std::vector<ocr::Para> paras;
             check("ocr: reads one area as a block",
-                  eng.read_area(data("page_left.png"), {}, {80, 180, 900, 240}, paras, &why) &&
+                  eng.read_area(data("page_left.png"), ocr::Rect{}, {80, 180, 900, 240}, paras, &why) &&
                   !paras.empty() && ocr::para_text(paras[0]).find("quick") != std::string::npos &&
                   ocr::para_text(paras[0]).find("rain") == std::string::npos, why);
 
             // A crop: the right half of the spread is page_right in page space.
             check("ocr: a crop reads in page space",
-                  eng.read_page(data("spread.png"), {1060, 0, 2060, 1400}, areas, &why));
+                  eng.read_page(data("spread.png"), ocr::Rect{1060, 0, 2060, 1400}, areas, &why));
             core::Page r; r.areas = areas;
             bool inside = !areas.empty();
             for (const auto& a : areas) if (a.box.x1 > 1000) inside = false;
             check("ocr: ...its boxes are relative to the crop",
                   inside && page_words(r).find("shutter") != std::string::npos);
             check("ocr: a missing file is an error with a reason",
-                  !eng.read_page(data("nope.png"), {}, areas, &why) && !why.empty());
+                  !eng.read_page(data("nope.png"), ocr::Rect{}, areas, &why) && !why.empty());
         }
     }
 

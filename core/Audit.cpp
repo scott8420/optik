@@ -1,4 +1,5 @@
 #include "Audit.hpp"
+#include "ocr/Condition.hpp"
 
 #include <cmath>
 #include <set>
@@ -67,6 +68,9 @@ std::vector<std::string> audit(const Book& book) {
         if (p.crop.empty()) say(at + ": empty crop " + rs(p.crop));
         if (p.crop.x0 < 0 || p.crop.y0 < 0) say(at + ": crop off the scan " + rs(p.crop));
         if (p.turns < 0 || p.turns > 3) say(at + ": turns " + std::to_string(p.turns) + " is not 0..3");
+        // s29: a skew is measured by a read, within what the measure looks for.
+        if (!(std::fabs(p.skew) <= ocr::kMaxSkew)) say(at + ": skew " + std::to_string(p.skew) + " past the measure");
+        if (!p.read && p.skew != 0.0) say(at + ": not read, yet straightened");
         if (!p.read && !p.areas.empty()) {
             // An unread page has no engine areas; only ones the author drew.
             for (const auto& a : p.areas)
@@ -142,7 +146,8 @@ bool same_book(const Book& a, const Book& b, std::string* why) {
         const std::string at = "page " + std::to_string(i + 1) + " ";
         if (x.id != y.id) return no(at + "id " + x.id + " vs " + y.id);
         if (x.scan_id != y.scan_id || x.half != y.half || !(x.crop == y.crop) ||
-            x.concerns != y.concerns || x.read != y.read || x.turns != y.turns)
+            x.concerns != y.concerns || x.read != y.read || x.turns != y.turns ||
+            std::fabs(x.skew - y.skew) > 1e-9)
             return no(at + "differs (" + x.id + ")");
         if (x.areas.size() != y.areas.size()) return no(at + "area count differs (" + x.id + ")");
         for (std::size_t k = 0; k < x.areas.size(); ++k)

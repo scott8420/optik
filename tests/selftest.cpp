@@ -20,6 +20,8 @@ void italic_tests();
 void spelling_tests();
 void find_tests();
 void format_tests();
+void condition_tests();
+void export_tests();
 
 namespace optik::test {
 static int g_pass = 0, g_fail = 0;
@@ -46,6 +48,8 @@ int main() {
     spelling_tests();
     find_tests();
     format_tests();
+    condition_tests();
+    export_tests();
     std::cout << "---------------------------------\n";
     std::cout << optik::test::passes() << " pass / " << optik::test::failures() << " fail\n";
     return optik::test::failures() == 0 ? 0 : 1;

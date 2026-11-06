@@ -18,6 +18,7 @@
 #include "PagesPanel.hpp"
 #include "PageView.hpp"
 #include "TextPanel.hpp"
+#include "core/Export.hpp"
 #include "core/Find.hpp"
 #include "core/Format.hpp"
 #include "core/Book.hpp"
@@ -81,7 +82,8 @@ private:
     void on_save_as();                                       // handler: Save As (s25)
     void refresh_recent_menu();                              // helper: the Recent submenu
     void on_about();                                         // handler: About
-    void on_export();                                        // handler: Export
+    void on_export();                                        // handler: Export (s29: the options first)
+    void export_to(const std::string& path);                 // files: write with m_export_opts, say so
     void build_settings_popover();                           // zone: book settings
     void sync_settings_popover();                            // helper
 
@@ -141,6 +143,7 @@ private:
     void sweep_plan_canvas();                                // sweep
     void sweep_plan_pages();                                 // sweep: the page verbs (s26)
     void sweep_shot(const std::string& name);                // sweep: window -> PNG
+    void sweep_shot_of(Gtk::Widget& w, const std::string& name);   // s29: another window (Export)
     void sweep_finish();                                     // sweep
 
     // -- state
@@ -152,6 +155,11 @@ private:
     Glib::RefPtr<Gio::Menu> m_recent_menu;
     std::unique_ptr<Gtk::Window> m_about;                   // made once, hidden on close
     std::unique_ptr<RecutWindow> m_recut;                   // made once, hidden on close (s26)
+    std::unique_ptr<Gtk::Window> m_export_win;              // s29: the export's options, made once
+    std::function<void()> m_export_sync;                    // the window from m_export_opts
+    std::function<void()> m_export_take;                    // ...and back (Export…; the sweep)
+    core::ExportOptions m_export_opts;                      // the session's, not the book's (s29)
+    std::string m_export_for;                               // the book the page range is for
     Glib::Dispatcher m_dispatch;
 
     std::string m_page_id;

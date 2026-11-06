@@ -113,7 +113,8 @@ json settings_out(const Settings& s) {
             {"join_pages", s.join_pages}, {"dehyphenate", s.dehyphenate},
             {"mark_headings", s.mark_headings}, {"mend_quotes", s.mend_quotes},
             {"small_caps", s.small_caps}, {"mark_italic", s.mark_italic},
-            {"check_spelling", s.check_spelling}};
+            {"check_spelling", s.check_spelling}, {"deskew", s.deskew},
+            {"decolour", s.decolour}, {"level", s.level}};
 }
 Settings settings_in(const json& j) {
     Settings s;   // a key missing from an older file keeps its default
@@ -128,6 +129,9 @@ Settings settings_in(const json& j) {
     s.small_caps         = j.value("small_caps", s.small_caps);
     s.mark_italic        = j.value("mark_italic", s.mark_italic);
     s.check_spelling     = j.value("check_spelling", s.check_spelling);
+    s.deskew             = j.value("deskew", s.deskew);        // s29
+    s.decolour           = j.value("decolour", s.decolour);
+    s.level              = j.value("level", s.level);
     return s;
 }
 
@@ -185,6 +189,7 @@ Status Book::open(const std::string& folder, Book& out) {
             p.concerns = jp.value("concerns", 0u);
             p.read     = jp.value("read", false);
             p.turns    = jp.value("turns", 0) & 3;      // s26; absent = upright
+            p.skew     = jp.value("skew", 0.0);         // s29; absent = straight
             for (const auto& ja : jp.value("areas", json::array())) p.areas.push_back(area_in(ja));
             b.m_pages.push_back(std::move(p));
         }
@@ -205,6 +210,7 @@ Status Book::save() const {
                    {"crop", rect_out(p.crop)}, {"concerns", p.concerns},
                    {"read", p.read}, {"areas", areas}};
         if (p.turns) jp["turns"] = p.turns;
+        if (p.skew != 0.0) jp["skew"] = p.skew;
         pages.push_back(std::move(jp));
     }
     json j = {{"schema", kSchema}, {"title", m_meta.title},

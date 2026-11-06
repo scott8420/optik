@@ -226,31 +226,144 @@ void Shell::on_about() {
     m_about->present();
 }
 
+// s29 (milestone 18): Export asks first -- which pages, running heads kept or
+// not, page breaks -- then where. The answers are the window's for the session
+// (not the book's: no journal step); the page range starts again for another book.
 void Shell::on_export() {
     if (!m_has_book) return;
     m_text.commit_now();
-    auto dlg = Gtk::FileDialog::create();
-    dlg->set_title("Export the book (.odt for Writer, or .txt)");
-    dlg->set_initial_folder(Gio::File::create_for_path(fs::path(m_book.folder()).parent_path().string()));
-    dlg->set_initial_name(m_book.meta().title + ".odt");
-    dlg->save(*this, [this, dlg](const Glib::RefPtr<Gio::AsyncResult>& r) {
-        Glib::RefPtr<Gio::File> f;
-        try { f = dlg->save_finish(r); } catch (const Glib::Error&) { return; }
-        if (!f) return;
-        std::string path = f->get_path();
-        const auto ext = fs::path(path).extension().string();
-        const auto blocks = core::flow(m_book);
-        std::string why;
-        bool ok;
-        if (ext == ".txt") {
-            ok = core::write_text(blocks, path, &why);
-        } else {
-            if (ext != ".odt") path += ".odt";
-            ok = core::write_odt(blocks, m_book.meta().title, path, &why);
-        }
-        say(ok ? "Exported " + std::to_string(blocks.size()) + " paragraphs to " + path
-               : "Export failed: " + why);
-    });
+    if (m_export_for != m_book.folder()) {
+        m_export_opts.first = 1;
+        m_export_opts.last  = 0;
+        m_export_for = m_book.folder();
+    }
+    if (!m_export_win) {
+        auto win = std::make_unique<Gtk::Window>();
+        win->set_title("Export");
+        win->set_transient_for(*this);
+        win->set_modal(true);
+        win->set_hide_on_close(true);
+        win->set_resizable(false);
+
+        auto* box = Gtk::make_managed<widgets::Box>("export.box", Gtk::Orientation::VERTICAL, 8);
+        box->set_margin(14);
+
+        auto* range = Gtk::make_managed<widgets::Box>("export.range", Gtk::Orientation::HORIZONTAL, 6);
+        auto* from_lbl = Gtk::make_managed<widgets::Label>("export.from.label", "Pages");
+        auto* from = Gtk::make_managed<widgets::SpinButton>("export.from");
+        auto* to_lbl = Gtk::make_managed<widgets::Label>("export.to.label", "to");
+        auto* to = Gtk::make_managed<widgets::SpinButton>("export.to");
+        auto* all = Gtk::make_managed<widgets::Button>("export.all", "All");
+        auto* here = Gtk::make_managed<widgets::Button>("export.here", "This Page");
+        for (auto* sb : {from, to}) { sb->set_increments(1, 10); sb->set_numeric(true); sb->set_width_chars(5); }
+        all->set_tooltip_text("Every page of the book");
+        here->set_tooltip_text("Only the page in view");
+        range->append(*from_lbl); range->append(*from); range->append(*to_lbl); range->append(*to);
+        range->append(*all); range->append(*here);
+
+        auto* heads = Gtk::make_managed<widgets::CheckButton>("export.heads", "Keep running heads and folios");
+        heads->set_tooltip_text("Each a Running Head paragraph where it stands; a paragraph that runs on "
+                                "over the page turn is still joined, and the heads follow it");
+        auto* br_lbl = Gtk::make_managed<widgets::Label>("export.breaks.label", "Page breaks");
+        br_lbl->set_halign(Gtk::Align::START);
+        auto* br_none = Gtk::make_managed<widgets::CheckButton>("export.breaks.none", "None -- the book runs on");
+        auto* br_head = Gtk::make_managed<widgets::CheckButton>("export.breaks.headings", "Before each heading (chapters start a page)");
+        auto* br_page = Gtk::make_managed<widgets::CheckButton>("export.breaks.pages", "At each scanned page (no joins over the page turn)");
+        br_head->set_group(*br_none);
+        br_page->set_group(*br_none);
+
+        auto* buttons = Gtk::make_managed<widgets::Box>("export.buttons", Gtk::Orientation::HORIZONTAL, 6);
+        buttons->set_halign(Gtk::Align::END);
+        auto* cancel = Gtk::make_managed<widgets::Button>("export.cancel", "Cancel");
+        auto* go = Gtk::make_managed<widgets::Button>("export.go", "Export…");
+        go->add_css_class("suggested-action");
+        buttons->append(*cancel);
+        buttons->append(*go);
+
+        for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{range, heads, br_lbl, br_none, br_head, br_page, buttons})
+            box->append(*w);
+        win->set_child(*box);
+
+        // The window shows m_export_opts; Export… takes them back.
+        m_export_sync = [this, from, to, heads, br_none, br_head, br_page] {
+            const int n = std::max<int>(1, int(m_book.pages().size()));
+            from->set_range(1, n);
+            to->set_range(1, n);
+            const core::PageSpan sp = core::span_of(m_book, m_export_opts);
+            from->set_value(sp.from + 1);
+            to->set_value(sp.to + 1);
+            heads->set_active(m_export_opts.keep_heads);
+            br_none->set_active(m_export_opts.breaks == core::ExportOptions::NoBreaks);
+            br_head->set_active(m_export_opts.breaks == core::ExportOptions::AtHeadings);
+            br_page->set_active(m_export_opts.breaks == core::ExportOptions::AtPages);
+        };
+        // The range never turns inside out: moving one end past the other moves both.
+        from->signal_value_changed().connect([from, to] {
+            if (to->get_value_as_int() < from->get_value_as_int()) to->set_value(from->get_value());
+        });
+        to->signal_value_changed().connect([from, to] {
+            if (from->get_value_as_int() > to->get_value_as_int()) from->set_value(to->get_value());
+        });
+        all->signal_clicked().connect([this, from, to] {
+            from->set_value(1);
+            to->set_value(std::max<int>(1, int(m_book.pages().size())));
+        });
+        here->signal_clicked().connect([this, from, to] {
+            const int i = m_book.index_of(m_page_id);
+            if (i < 0) return;
+            to->set_value(std::max<int>(1, int(m_book.pages().size())));
+            from->set_value(i + 1);
+            to->set_value(i + 1);
+        });
+        cancel->signal_clicked().connect([this] { m_export_win->set_visible(false); });
+        m_export_take = [this, from, to, heads, br_head, br_page] {
+            const int n = int(m_book.pages().size());
+            m_export_opts.first = from->get_value_as_int();
+            m_export_opts.last  = to->get_value_as_int() >= n ? 0 : to->get_value_as_int();
+            m_export_opts.keep_heads = heads->get_active();
+            m_export_opts.breaks = br_page->get_active() ? core::ExportOptions::AtPages
+                                 : br_head->get_active() ? core::ExportOptions::AtHeadings
+                                                         : core::ExportOptions::NoBreaks;
+            m_export_win->set_visible(false);
+        };
+        go->signal_clicked().connect([this] {
+            m_export_take();
+
+            auto dlg = Gtk::FileDialog::create();
+            dlg->set_title("Export the book (.odt for Writer, or .txt)");
+            dlg->set_initial_folder(Gio::File::create_for_path(fs::path(m_book.folder()).parent_path().string()));
+            dlg->set_initial_name(m_book.meta().title + ".odt");
+            dlg->save(*this, [this, dlg](const Glib::RefPtr<Gio::AsyncResult>& r) {
+                Glib::RefPtr<Gio::File> f;
+                try { f = dlg->save_finish(r); } catch (const Glib::Error&) { return; }
+                if (f) export_to(f->get_path());
+            });
+        });
+        m_export_win = std::move(win);
+    }
+    m_export_sync();
+    m_export_win->present();
+}
+
+void Shell::export_to(const std::string& where) {
+    std::string path = where;
+    const auto ext = fs::path(path).extension().string();
+    const auto blocks = core::flow(m_book, m_export_opts);
+    const core::PageSpan sp = core::span_of(m_book, m_export_opts);
+    std::string why;
+    bool ok;
+    if (ext == ".txt") {
+        ok = core::write_text(blocks, path, &why);
+    } else {
+        if (ext != ".odt") path += ".odt";
+        ok = core::write_odt(blocks, m_book.meta().title, path, &why);
+    }
+    const bool whole = sp.from == 0 && sp.to + 1 == int(m_book.pages().size());
+    const std::string pages = whole ? "" : sp.from == sp.to
+        ? " (page " + std::to_string(sp.from + 1) + ")"
+        : " (pages " + std::to_string(sp.from + 1) + "-" + std::to_string(sp.to + 1) + ")";
+    say(ok ? "Exported " + std::to_string(blocks.size()) + " paragraphs" + pages + " to " + path
+           : "Export failed: " + why);
 }
 
 // -- the Book popover: FineReader's options, per book, each one a step ------------------
@@ -287,12 +400,19 @@ void Shell::build_settings_popover() {
     auto* caps   = Gtk::make_managed<widgets::CheckButton>("settings.smallcaps", "Small caps: capital headings, check chapter openers when reading");
     auto* ital  = Gtk::make_managed<widgets::CheckButton>("settings.italic", "Italic: measure the lean, check italic words when reading");
     auto* spell = Gtk::make_managed<widgets::CheckButton>("settings.spell", "Spelling: check words the dictionary does not know when reading");
+    // Condition, phase 0 (s29): the page before the engine, and on the screen.
+    auto* deskew = Gtk::make_managed<widgets::CheckButton>("settings.deskew", "Deskew: measure the page's tilt and read it straightened");
+    auto* decol  = Gtk::make_managed<widgets::CheckButton>("settings.decolour", "Decolour: show and read the page in grey");
+    auto* level  = Gtk::make_managed<widgets::CheckButton>("settings.level", "Level: even the paper to white and the ink to black");
+    deskew->set_tooltip_text("Takes effect on the next read of a page (the page turns with its words)");
+    decol->set_tooltip_text("The page picture changes now; the engine reads it so on the next read");
+    level->set_tooltip_text("The page picture changes now; the engine reads it so on the next read");
     ital->set_tooltip_text("Takes effect on the next read of a page. Ctrl+I sets or clears italic on a word");
     heads2->set_tooltip_text("Takes effect on the next read of a page");
     quotes->set_tooltip_text("Takes effect on the next read of a page");
     caps->set_tooltip_text("Takes effect on the next read of a page");
 
-    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, thr_row, split, heads, heads2, quotes, caps, ital, spell, join, hyph})
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, thr_row, split, deskew, decol, level, heads, heads2, quotes, caps, ital, spell, join, hyph})
         box->append(*w);
     m_settings_pop.set_child(*box);
     m_settings_pop.set_parent(m_title);   // ☰ -> Book Settings… points it at the title
@@ -313,6 +433,9 @@ void Shell::build_settings_popover() {
         caps->set_active(s.small_caps);
         ital->set_active(s.mark_italic);
         spell->set_active(s.check_spelling);
+        deskew->set_active(s.deskew);
+        decol->set_active(s.decolour);
+        level->set_active(s.level);
         // No dictionary for the book's language: say which package, keep the box.
         const std::string dic = core::dictionary_for(s.language);
         spell->set_tooltip_text(dic.empty()
@@ -331,6 +454,8 @@ void Shell::build_settings_popover() {
             for (const auto& p : m_book.pages()) m_pages.refresh(m_book, p.id);
             refresh_page(m_page_id);
         }
+        // The tone changes how every page looks (s29): new pictures and thumbs.
+        if (label == "Decolour" || label == "Level") refresh_page(m_page_id);
     };
     lang->signal_activate().connect([=] {
         const std::string v = lang->get_text();
@@ -371,6 +496,18 @@ void Shell::build_settings_popover() {
     ital->signal_toggled().connect([=] {
         const bool v = ital->get_active();
         change("Italic", [v](core::Settings& s) { s.mark_italic = v; });
+    });
+    deskew->signal_toggled().connect([=] {
+        const bool v = deskew->get_active();
+        change("Deskew", [v](core::Settings& s) { s.deskew = v; });
+    });
+    decol->signal_toggled().connect([=] {
+        const bool v = decol->get_active();
+        change("Decolour", [v](core::Settings& s) { s.decolour = v; });
+    });
+    level->signal_toggled().connect([=] {
+        const bool v = level->get_active();
+        change("Level", [v](core::Settings& s) { s.level = v; });
     });
     spell->signal_toggled().connect([=] {
         const bool v = spell->get_active();

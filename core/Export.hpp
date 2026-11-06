@@ -32,12 +32,34 @@ std::string fmt_open(unsigned mask);     // kFmtOn + the mask byte
 std::string plain(const std::string& marked);
 
 struct Block {
-    enum Kind { Paragraph, Heading } kind = Paragraph;
+    enum Kind { Paragraph, Heading, RunningHead } kind = Paragraph;
     std::string text;         // with emphasis marks (above)
     std::string page_id;      // where it starts
+    bool break_before = false;   // s29: a page break before it (ExportOptions::breaks)
+};
+
+// The export's own choices (s29, milestone 18): asked when exporting, kept by
+// the window for the session -- not the book's settings, not a journal step.
+struct ExportOptions {
+    int  first = 1;               // pages, 1-based in book order, inclusive
+    int  last  = 0;               // 0 = to the book's last page
+    bool keep_heads = false;      // running heads and folios kept, each a Running
+                                  // Head paragraph where it stands -- a paragraph
+                                  // joined over the page turn still joins (the
+                                  // heads between follow it)
+    enum Breaks { NoBreaks, AtHeadings, AtPages } breaks = NoBreaks;
+                                  // AtHeadings: before every heading but the first
+                                  // block; AtPages: at every scanned page -- the
+                                  // pages are kept as pages, so no page-turn join
+    bool operator==(const ExportOptions&) const = default;
 };
 
 std::vector<Block> flow(const Book& book);
+std::vector<Block> flow(const Book& book, const ExportOptions& opts);
+
+// The pages an export takes (indices into book.pages(), clamped); empty if none.
+struct PageSpan { int from = 0, to = -1; bool empty() const { return to < from; } };
+PageSpan span_of(const Book& book, const ExportOptions& opts);
 
 // Line join inside a paragraph, by the book's dehyphenation setting. Exposed for
 // the selftest; flow() is its only other caller.

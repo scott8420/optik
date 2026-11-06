@@ -91,7 +91,7 @@ void PageView::show(const core::Book* book, const core::Page* page) {
     m_book = book;
     m_page = page;
     if (other) { m_word = {}; m_area = -1; }
-    if (page && core::look_key(*page) != m_pic_key) { m_surface.reset(); m_pic.reset(); }
+    if (page && core::look_key(*book, *page) != m_pic_key) { m_surface.reset(); m_pic.reset(); }
     if (other) m_pan_x = m_pan_y = 0;   // a new page starts at its top
     queue_draw();
 }
@@ -204,7 +204,7 @@ void PageView::on_draw(const Cairo::RefPtr<Cairo::Context>& cr, int, int) {
     cr->rectangle(0, 0, s * ps.w, s * ps.h);
     cr->set_source_rgb(1, 1, 1);
     cr->fill();
-    if (m_surface && m_pic && m_pic_key == core::look_key(*m_page)) {
+    if (m_surface && m_pic && m_pic_key == core::look_key(*m_book, *m_page)) {
         cr->save();
         cr->scale(s / m_pic->scale, s / m_pic->scale);
         auto pat = Cairo::SurfacePattern::create(m_surface);

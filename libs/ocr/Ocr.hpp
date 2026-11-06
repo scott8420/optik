@@ -10,6 +10,7 @@
 // wrong and re-reads just that area. So there are two verbs -- read a whole page
 // (layout + text), and read one rectangle as one block.
 
+#include "Condition.hpp"
 #include "Layout.hpp"
 
 #include <memory>
@@ -48,6 +49,15 @@ public:
     bool read_page(const std::string& image_path, const Rect& crop, int turns,
                    std::vector<Area>& out, std::string* why = nullptr);
     bool read_area(const std::string& image_path, const Rect& crop, int turns, const Rect& area,
+                   std::vector<Para>& out, std::string* why = nullptr);
+
+    // Through the page's LOOK (s29, ocr/Condition): cut, turned, toned and
+    // straightened by look.skew; every box is in that page. With `measured`
+    // set, the page's skew is measured instead (look.skew is ignored), the page
+    // straightened by it, and the angle written there -- the page keeps it.
+    bool read_page(const std::string& image_path, const Look& look, std::vector<Area>& out,
+                   std::string* why = nullptr, double* measured = nullptr);
+    bool read_area(const std::string& image_path, const Look& look, const Rect& area,
                    std::vector<Para>& out, std::string* why = nullptr);
 
     static std::string version();

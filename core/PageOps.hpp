@@ -13,6 +13,7 @@
 // book (and on disk), so undo and a later re-cut still have it.
 
 #include "Undo.hpp"
+#include "ocr/Condition.hpp"
 
 #include <string>
 #include <vector>
@@ -42,9 +43,12 @@ std::vector<std::string> pages_of_scan(const Book& b, const std::string& scan_id
 // cut outside the scan, or the cut it already has).
 std::vector<std::string> recut_scan(Edit& e, const std::string& scan_id, const Rect& full, int cut);
 
-// What a page LOOKS like, as a key: id, crop and turn. A picture made for one
-// key is stale for another (a re-cut, a turn, or the undo of one) -- the app's
-// picture and thumbnail caches are keyed by it.
-std::string look_key(const Page& p);
+// What a page LOOKS like: crop, turn, skew (the page's) and the book's tone
+// (decolour, level) -- s29. As a key (with the id): a picture made for one key is
+// stale for another (a re-cut, a turn, a re-read that straightened it, a tone
+// switched, or the undo of one) -- the app's picture and thumbnail caches are
+// keyed by it.
+ocr::Look   look_of(const Book& b, const Page& p);
+std::string look_key(const Book& b, const Page& p);
 
 }  // namespace optik::core

@@ -2,6 +2,7 @@
 
 #include <zip.h>
 
+#include <algorithm>
 #include <fstream>
 #include <memory>
 
@@ -148,16 +149,51 @@ std::string join_lines(const std::vector<std::string>& lines, bool dehyphenate) 
     return out;
 }
 
-std::vector<Block> flow(const Book& book) {
-    const Settings& st = book.meta().settings;
-    std::vector<Block> out;
-    bool open_para = false;   // the last block may continue on the next page
+std::vector<Block> flow(const Book& book) { return flow(book, ExportOptions{}); }
 
-    for (const Page& page : book.pages()) {
+PageSpan span_of(const Book& book, const ExportOptions& opts) {
+    const int n = int(book.pages().size());
+    PageSpan s;
+    s.from = std::max(opts.first, 1) - 1;
+    s.to   = (opts.last <= 0 ? n : std::min(opts.last, n)) - 1;
+    return s;
+}
+
+std::vector<Block> flow(const Book& book, const ExportOptions& opts) {
+    const Settings& st = book.meta().settings;
+    const PageSpan span = span_of(book, opts);
+    const bool by_page = opts.breaks == ExportOptions::AtPages;
+    std::vector<Block> out;
+    bool open_para = false;      // the last paragraph may continue on the next page
+    std::size_t open_at = 0;     // ...which block it is (heads kept may follow it)
+
+    for (int pi = span.from; pi <= span.to; ++pi) {
+        const Page& page = book.pages()[std::size_t(pi)];
         bool first_on_page = true;
         bool last_heading  = false;   // the block before, on this page, was a heading
+        bool page_started  = false;   // a block of this page is out (AtPages breaks)
+        auto push = [&](Block b) {
+            if (!page_started && by_page && !out.empty()) b.break_before = true;
+            if (b.kind == Block::Heading && opts.breaks == ExportOptions::AtHeadings && !out.empty())
+                b.break_before = true;
+            page_started = true;
+            out.push_back(std::move(b));
+        };
         for (const auto& area : page.areas) {
-            if (!ocr::kind_is_text(area.kind)) continue;
+            if (!ocr::kind_is_text(area.kind)) {
+                // s29: running heads and folios, kept where they stand.
+                if (!opts.keep_heads || (area.kind != ocr::Kind::Header && area.kind != ocr::Kind::Footer))
+                    continue;
+                std::string text;
+                for (const auto& para : area.paras) {
+                    const std::string t = ocr::para_text(para);
+                    if (t.empty()) continue;
+                    if (!text.empty()) text += ' ';
+                    for (char c : t) text += c == '\n' ? ' ' : c;
+                }
+                if (!text.empty()) push(Block{Block::RunningHead, text, page.id});
+                continue;
+            }
             for (const auto& para : area.paras) {
                 std::vector<std::string> lines;
                 for (const auto& l : para.lines) {
@@ -188,19 +224,21 @@ std::vector<Block> flow(const Book& book) {
                 // broke it (if the book says to join there) or the engine split a
                 // paragraph mid-sentence -- after an indented first line, or at a
                 // hyphenated line end. A real paragraph does not start in lower case.
-                const bool may_join = first_on_page ? st.join_pages : true;
+                // (s29) Pages kept as pages (a break at each) do not join over the turn.
+                const bool may_join = first_on_page ? (st.join_pages && !by_page) : true;
                 if (open_para && may_join && !heading && starts_lower(text) &&
-                    !out.empty() && out.back().kind == Block::Paragraph) {
-                    out.back().text = join_lines({out.back().text, text}, st.dehyphenate);
+                    open_at < out.size() && out[open_at].kind == Block::Paragraph) {
+                    out[open_at].text = join_lines({out[open_at].text, text}, st.dehyphenate);
                 } else if (heading && last_heading && !out.empty() &&
                            out.back().kind == Block::Heading && out.back().page_id == page.id) {
                     out.back().text += '\n' + text;   // one heading, read as two blocks
                 } else {
-                    out.push_back(Block{heading ? Block::Heading : Block::Paragraph, text, page.id});
+                    push(Block{heading ? Block::Heading : Block::Paragraph, text, page.id});
+                    open_at = out.size() - 1;
                 }
                 last_heading = heading;
                 first_on_page = false;
-                open_para = !heading && !ends_sentence(out.back().text);
+                open_para = !heading && !ends_sentence(out[open_at].text);
             }
         }
     }
@@ -211,7 +249,7 @@ bool write_text(const std::vector<Block>& blocks, const std::string& path, std::
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f) { if (why) *why = "could not write " + path; return false; }
     for (std::size_t i = 0; i < blocks.size(); ++i) {
-        if (i) f << "\n\n";
+        if (i) f << (blocks[i].break_before ? "\n\f\n" : "\n\n");   // s29: a form feed is the page break
         f << plain(blocks[i].text);
     }
     f << '\n';
@@ -256,6 +294,9 @@ bool write_odt(const std::vector<Block>& blocks, const std::string& title,
         "  <style:style style:name=\"Heading_20_1\" style:display-name=\"Heading 1\" style:family=\"paragraph\" style:parent-style-name=\"Standard\" style:next-style-name=\"Text_20_body\" style:default-outline-level=\"1\" style:class=\"text\">\n"
         "   <style:text-properties fo:font-size=\"130%\" fo:font-weight=\"bold\"/>\n"
         "  </style:style>\n"
+        "  <style:style style:name=\"Running_20_Head\" style:display-name=\"Running Head\" style:family=\"paragraph\" style:parent-style-name=\"Standard\" style:class=\"extra\">\n"
+        "   <style:text-properties fo:font-size=\"85%\"/>\n"
+        "  </style:style>\n"
         "  <style:style style:name=\"Emphasis\" style:family=\"text\">\n"
         "   <style:text-properties fo:font-style=\"italic\"/>\n"
         "  </style:style>\n"
@@ -284,13 +325,26 @@ bool write_odt(const std::vector<Block>& blocks, const std::string& title,
     std::string content =
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<office:document-content" + ns + ">\n"
+        // s29: a page break is the paragraph's style with a break before it --
+        // an automatic style on the named one, so Writer still sees Text body,
+        // Heading 1, Running Head.
+        " <office:automatic-styles>\n"
+        "  <style:style style:name=\"P_break\" style:family=\"paragraph\" style:parent-style-name=\"Text_20_body\"><style:paragraph-properties fo:break-before=\"page\"/></style:style>\n"
+        "  <style:style style:name=\"H_break\" style:family=\"paragraph\" style:parent-style-name=\"Heading_20_1\"><style:paragraph-properties fo:break-before=\"page\"/></style:style>\n"
+        "  <style:style style:name=\"R_break\" style:family=\"paragraph\" style:parent-style-name=\"Running_20_Head\"><style:paragraph-properties fo:break-before=\"page\"/></style:style>\n"
+        " </office:automatic-styles>\n"
         " <office:body>\n  <office:text>\n";
     for (const auto& b : blocks) {
+        const std::string body = with_breaks(xml_escape(b.text));
         if (b.kind == Block::Heading)
-            content += "   <text:h text:style-name=\"Heading_20_1\" text:outline-level=\"1\">" +
-                       with_breaks(xml_escape(b.text)) + "</text:h>\n";
+            content += std::string("   <text:h text:style-name=\"") + (b.break_before ? "H_break" : "Heading_20_1") +
+                       "\" text:outline-level=\"1\">" + body + "</text:h>\n";
+        else if (b.kind == Block::RunningHead)
+            content += std::string("   <text:p text:style-name=\"") + (b.break_before ? "R_break" : "Running_20_Head") +
+                       "\">" + body + "</text:p>\n";
         else
-            content += "   <text:p text:style-name=\"Text_20_body\">" + with_breaks(xml_escape(b.text)) + "</text:p>\n";
+            content += std::string("   <text:p text:style-name=\"") + (b.break_before ? "P_break" : "Text_20_body") +
+                       "\">" + body + "</text:p>\n";
     }
     content += "  </office:text>\n </office:body>\n</office:document-content>\n";
 

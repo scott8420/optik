@@ -76,25 +76,15 @@ namespace {
 struct PixDel { void operator()(Pix* p) const { pixDestroy(&p); } };
 using PixPtr = std::unique_ptr<Pix, PixDel>;
 
-// Load the scan and cut the page out of it. Tesseract reads the crop as its own
+// The page as the look says (Condition.hpp). Tesseract reads it as its own
 // image, so every box it reports is already in page space.
-PixPtr load_crop(const std::string& path, const Rect& crop, int turns, std::string* why) {
-    PixPtr full(pixRead(path.c_str()));
-    if (!full) { if (why) *why = "could not read " + path; return nullptr; }
-    PixPtr part;
-    if (crop.empty()) {
-        part = std::move(full);
-    } else {
-        Box* b = boxCreate(crop.x0, crop.y0, crop.width(), crop.height());
-        part.reset(pixClipRectangle(full.get(), b, nullptr));
-        boxDestroy(&b);
-        if (!part) { if (why) *why = "the page's rectangle is outside its scan"; return nullptr; }
-    }
-    turns &= 3;
-    if (turns == 0) return part;
-    PixPtr turned(pixRotateOrth(part.get(), turns));
-    if (!turned) { if (why) *why = "could not turn the page"; return nullptr; }
-    return turned;
+PixPtr load_look(const std::string& path, const Look& look, std::string* why, double* measured) {
+    if (!measured) return PixPtr(load_page(path, look, why));
+    PixPtr cut(cut_page(path, look.crop, look.turns, why));
+    if (!cut) return nullptr;
+    PixPtr toned(tone(cut.get(), look));
+    *measured = find_skew(toned.get());
+    return PixPtr(straighten(toned.get(), *measured));
 }
 
 // The page as 8-bit grey bytes, for the italic measure (Slant.hpp): the same
@@ -215,9 +205,19 @@ bool Engine::read_area(const std::string& path, const Rect& crop, const Rect& ar
 
 bool Engine::read_page(const std::string& path, const Rect& crop, int turns,
                        std::vector<Area>& out, std::string* why) {
+    return read_page(path, Look{crop, turns}, out, why);
+}
+
+bool Engine::read_area(const std::string& path, const Rect& crop, int turns, const Rect& area,
+                       std::vector<Para>& out, std::string* why) {
+    return read_area(path, Look{crop, turns}, area, out, why);
+}
+
+bool Engine::read_page(const std::string& path, const Look& look, std::vector<Area>& out,
+                       std::string* why, double* measured) {
     out.clear();
     if (!m->ready) { if (why) *why = "the engine has no language loaded"; return false; }
-    PixPtr pix = load_crop(path, crop, turns, why);
+    PixPtr pix = load_look(path, look, why, measured);
     if (!pix) return false;
 
     auto& api = m->api;
@@ -263,12 +263,12 @@ bool Engine::read_page(const std::string& path, const Rect& crop, int turns,
     return true;
 }
 
-bool Engine::read_area(const std::string& path, const Rect& crop, int turns, const Rect& area,
+bool Engine::read_area(const std::string& path, const Look& look, const Rect& area,
                        std::vector<Para>& out, std::string* why) {
     out.clear();
     if (!m->ready) { if (why) *why = "the engine has no language loaded"; return false; }
     if (area.empty()) { if (why) *why = "the area is empty"; return false; }
-    PixPtr pix = load_crop(path, crop, turns, why);
+    PixPtr pix = load_look(path, look, why, nullptr);
     if (!pix) return false;
 
     auto& api = m->api;

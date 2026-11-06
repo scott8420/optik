@@ -47,6 +47,7 @@ public:
     // `page` must outlive the next call; the Shell re-shows after every change.
     void show(const core::Book* book, const core::Page* page);
     void set_picture(const std::string& look_key, std::shared_ptr<const core::Picture> pic);   // core::look_key
+    const std::string& picture_key() const { return m_pic_key; }   // the sweep's witness (s29)
     void set_word(const WordRef& w);
     void set_area(int area);
     void set_tool(Tool t);

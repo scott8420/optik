@@ -1,6 +1,7 @@
 #include "PageOps.hpp"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace optik::core {
 
@@ -8,6 +9,7 @@ namespace {
 void clear_reading(Page& p) {
     p.areas.clear();
     p.read = false;
+    p.skew = 0.0;   // s29: measured by the next read
 }
 }  // namespace
 
@@ -107,9 +109,18 @@ std::vector<std::string> recut_scan(Edit& e, const std::string& scan_id, const R
     return changed;
 }
 
-std::string look_key(const Page& p) {
-    return p.id + "|" + std::to_string(p.crop.x0) + "," + std::to_string(p.crop.y0) + "," +
-           std::to_string(p.crop.x1) + "," + std::to_string(p.crop.y1) + "|" + std::to_string(p.turns);
+ocr::Look look_of(const Book& b, const Page& p) {
+    const Settings& s = b.meta().settings;
+    return ocr::Look{p.crop, p.turns, p.skew, s.decolour, s.level};
+}
+
+std::string look_key(const Book& b, const Page& p) {
+    const ocr::Look l = look_of(b, p);
+    char skew[32];
+    std::snprintf(skew, sizeof skew, "%.2f", l.skew);
+    return p.id + "|" + std::to_string(l.crop.x0) + "," + std::to_string(l.crop.y0) + "," +
+           std::to_string(l.crop.x1) + "," + std::to_string(l.crop.y1) + "|" + std::to_string(l.turns) +
+           "|" + skew + "|" + (l.decolour ? "g" : "c") + (l.level ? "l" : "r");
 }
 
 }  // namespace optik::core

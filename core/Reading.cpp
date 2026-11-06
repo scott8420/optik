@@ -35,6 +35,7 @@ ReadRequest request_for(const Book& book, const Page& page) {
     r.scan_path = book.scan_path(page.scan_id);
     r.crop      = page.crop;
     r.turns     = page.turns;
+    r.skew      = page.skew;
     r.settings  = book.meta().settings;
     r.book_words = book.meta().words;
     return r;
@@ -53,6 +54,7 @@ Reading read(ocr::Engine& engine, const ReadRequest& r) {
     out.page_id = r.page_id;
     out.crop    = r.crop;
     out.turns   = r.turns;
+    out.skew    = r.skew;
     out.area    = r.area;
     out.area_box = r.area_box;
     out.area_was = r.area_was;
@@ -60,7 +62,9 @@ Reading read(ocr::Engine& engine, const ReadRequest& r) {
         if (!engine.init(r.settings.language, &out.why)) return out;
     }
     if (r.area >= 0) {
-        out.ok = engine.read_area(r.scan_path, r.crop, r.turns, r.area_box, out.paras, &out.why);
+        // An area is read in the page as it was read: its boxes are there.
+        const ocr::Look look{r.crop, r.turns, r.skew, r.settings.decolour, r.settings.level};
+        out.ok = engine.read_area(r.scan_path, look, r.area_box, out.paras, &out.why);
         // The author drew or moved this area: it keeps its kind, so only the
         // word-level pass applies (quotes); headings and openers are the page's.
         if (out.ok && r.settings.mend_quotes) {
@@ -75,7 +79,12 @@ Reading read(ocr::Engine& engine, const ReadRequest& r) {
         }
         return out;
     }
-    out.ok = engine.read_page(r.scan_path, r.crop, r.turns, out.areas, &out.why);
+    // The whole page: conditioned (phase 0, s29), the skew measured afresh when
+    // the book deskews -- else read as cut, and the page is straight again.
+    const ocr::Look look{r.crop, r.turns, 0.0, r.settings.decolour, r.settings.level};
+    out.skew = 0.0;
+    out.ok = engine.read_page(r.scan_path, look, out.areas, &out.why,
+                              r.settings.deskew ? &out.skew : nullptr);
     if (!out.ok) return out;
     // The passes, each the book's to decline (Passes.hpp has the order's why).
     const Settings& st = r.settings;
@@ -94,6 +103,7 @@ bool land(Edit& e, const Reading& r) {
         return false;
     Page& p = e.page(r.page_id);
     if (r.area >= 0) {
+        if (e.book().page(r.page_id)->skew != r.skew) return false;   // s29: straightened since
         int at = -1;
         if (r.area < int(p.areas.size()) && p.areas[std::size_t(r.area)].box == r.area_was) at = r.area;
         for (std::size_t i = 0; at < 0 && i < p.areas.size(); ++i)
@@ -108,6 +118,7 @@ bool land(Edit& e, const Reading& r) {
     }
     p.areas = r.areas;
     p.read  = true;
+    p.skew  = r.skew;
     return true;
 }
 

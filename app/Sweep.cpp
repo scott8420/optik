@@ -25,6 +25,7 @@
 
 #include "Log.hpp"
 #include "RecutWindow.hpp"
+#include "WidgetRegistry.hpp"
 #include "core/Audit.hpp"
 #include "core/PageOps.hpp"
 
@@ -35,6 +36,7 @@
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 
 namespace fs = std::filesystem;
@@ -91,6 +93,10 @@ void Shell::sweep_check(const std::string& what) {
     if (!m_page_id.empty() && !current()) bad.push_back("shown page " + m_page_id + " is not in the book");
     if (const core::Page* p = current(); p && (m_area < -1 || m_area >= int(p->areas.size())))
         bad.push_back("selected area " + std::to_string(m_area) + " of " + std::to_string(p->areas.size()));
+    // s29: the page shows the picture of how it looks now (a tone switched, a
+    // re-read that straightened it) -- not a stale one.
+    if (const core::Page* p = current(); p && m_view.picture_key() != core::look_key(m_book, *p))
+        bad.push_back("the page shows '" + m_view.picture_key() + "', it looks '" + core::look_key(m_book, *p) + "'");
     if (m_word.valid() && current() && !word_at(*current(), m_word) && m_actions["accept"]->get_enabled())
         bad.push_back("Accept is enabled on a word that has gone");
     if (bad.empty()) {
@@ -139,6 +145,77 @@ bool Shell::sweep_tick() {
             activate_action("win.next");
         });
         S.add("the last page, pictured", [this] { sweep_shot("2_last_page"); });
+        // s29: a crooked scan (tilted.png in scripts/sweep.sh) is read straightened
+        // and shown so; the invariant in sweep_check holds the picture to its look.
+        S.add("the crooked page, read straightened", [this] {
+            bool any = false;
+            for (int i = 0; i < int(m_book.pages().size()); ++i)
+                if (m_book.pages()[std::size_t(i)].skew != 0.0) { go_to(i); any = true; break; }
+            if (!any && m_book.meta().settings.deskew && m_book.pages().size() > 3) {
+                ++m_sweep->fails;
+                std::cout << "sweep FAIL no page was straightened (a crooked scan is in the book)" << std::endl;
+            }
+        });
+        S.add("the crooked page, pictured", [this] { sweep_shot("5_straightened"); });
+        // s29: Export's options -- the window opened, set through its own boxes
+        // (This Page, heads kept, breaks before headings), taken, written; then
+        // All and the defaults back. A file chooser cannot be driven: export_to
+        // is what it calls. Each written file must be there and not empty.
+        S.add("export: the options window", [this] { activate_action("win.export"); });
+        S.add("export: a frame drawn", [] {});
+        S.add("export: pictured", [this] { if (m_export_win) sweep_shot_of(*m_export_win, "6_export"); });
+        auto press = [this](const char* name) {
+            return [this, name] {
+                if (auto* bt = dynamic_cast<Gtk::Button*>(registry::find(name))) bt->activate();
+                else { ++m_sweep->fails; std::cout << "sweep FAIL no widget " << name << std::endl; }
+            };
+        };
+        auto tick = [this](const char* name) {
+            return [this, name] {
+                if (auto* c = dynamic_cast<Gtk::CheckButton*>(registry::find(name))) c->set_active(true);
+                else { ++m_sweep->fails; std::cout << "sweep FAIL no widget " << name << std::endl; }
+            };
+        };
+        auto written = [this](const std::string& file, const std::function<bool(const std::string&)>& ok) {
+            return [this, file, ok] {
+                const std::string path = (fs::temp_directory_path() / ("optik_sweep_" + file)).string();
+                m_export_take();
+                export_to(path);
+                std::error_code ec;
+                if (!fs::exists(path, ec) || fs::file_size(path, ec) == 0 || !ok(path)) {
+                    ++m_sweep->fails;
+                    std::cout << "sweep FAIL export " << file << " not written as asked" << std::endl;
+                }
+                fs::remove(path, ec);
+            };
+        };
+        S.add("export: This Page", press("export.here"));
+        S.add("export: heads kept", tick("export.heads"));
+        S.add("export: breaks before headings", tick("export.breaks.headings"));
+        S.add("export: written (this page, .odt)", written("page.odt", [](const std::string&) { return true; }));
+        S.add("export: again, All, breaks at pages", [this, press, tick] {
+            activate_action("win.export");
+            press("export.all")();
+            tick("export.breaks.pages")();
+        });
+        S.add("export: written (all, .txt, a form feed a page)", written("all.txt", [this](const std::string& p) {
+            std::ifstream f(p, std::ios::binary);
+            const std::string t((std::istreambuf_iterator<char>(f)), {});
+            int ff = 0;
+            for (char c : t) ff += c == '\f';
+            return m_export_opts.last == 0 && m_export_opts.first == 1 && ff > 0 &&
+                   ff < int(m_book.pages().size());
+        }));
+        S.add("export: the defaults back", [this, tick] {
+            activate_action("win.export");
+            if (auto* c = dynamic_cast<Gtk::CheckButton*>(registry::find("export.heads"))) c->set_active(false);
+            tick("export.breaks.none")();
+            m_export_take();
+            if (!(m_export_opts == core::ExportOptions{})) {
+                ++m_sweep->fails;
+                std::cout << "sweep FAIL export: the defaults did not come back" << std::endl;
+            }
+        });
         S.add("plan: the canvas, page 1", [this] { go_to(0); sweep_plan_canvas(); });
         if (m_book.pages().size() > 1)
             S.add("plan: the canvas, page 2", [this] { go_to(1); sweep_plan_canvas(); });
@@ -297,6 +374,26 @@ void Shell::sweep_plan_page(int index) {
         activate_action("win.book-settings");
         m_settings_pop.popdown();
     }});
+    // s29: condition -- each switch through its own box (the popover's handler,
+    // the step, the redraw), a page read with and without deskew, undone.
+    auto flip = [this](const char* name) {
+        return [this, name] {
+            if (auto* c = dynamic_cast<Gtk::CheckButton*>(registry::find(name))) c->set_active(!c->get_active());
+            else { ++m_sweep->fails; std::cout << "sweep FAIL no widget " << name << std::endl; }
+        };
+    };
+    for (const char* n : {"settings.level", "settings.decolour"})
+        v.push_back({pg + "condition: flip " + n, flip(n)});
+    // The flipped boxes leave the window to lay out again: a frame first.
+    v.push_back({pg + "condition: a frame drawn", [this] { queue_draw(); }});
+    v.push_back({pg + "condition: a frame drawn", [] {}});
+    v.push_back({pg + "condition: pictured toned", [this] { sweep_shot("4_toned"); }});
+    for (const char* n : {"settings.decolour", "settings.level", "settings.deskew"})
+        v.push_back({pg + "condition: flip " + n, flip(n)});
+    v.push_back({pg + "condition: read with deskew off", act("win.read-page")});
+    v.push_back({pg + "condition: flip settings.deskew back", flip("settings.deskew")});
+    v.push_back({pg + "condition: read with deskew on", act("win.read-page")});
+    for (const char* a : {"win.undo", "win.undo", "win.redo", "win.redo"}) v.push_back({pg + "condition: " + a, act(a)});
     v.push_back({pg + "About, opened and closed", [this] {
         activate_action("win.about");
         if (m_about) m_about->set_visible(false);
@@ -487,16 +584,18 @@ void Shell::sweep_plan_pages() {
 
 // The window as the compositor would show it, to a PNG. GTK's C API: gtkmm 4.10
 // does not wrap Gsk::Renderer::render_texture.
-void Shell::sweep_shot(const std::string& name) {
+void Shell::sweep_shot(const std::string& name) { sweep_shot_of(*this, name); }
+
+void Shell::sweep_shot_of(Gtk::Widget& of, const std::string& name) {
     auto& S = *m_sweep;
     if (S.shots.empty()) return;
     std::error_code ec;
     fs::create_directories(S.shots, ec);
-    GtkWidget* w = GTK_WIDGET(gobj());
+    GtkWidget* w = of.gobj();
     const int width = gtk_widget_get_width(w), height = gtk_widget_get_height(w);
     GtkNative* native = gtk_widget_get_native(w);
     GskRenderer* r = native ? gtk_native_get_renderer(native) : nullptr;
-    if (!r || width <= 0 || height <= 0) return;
+    if (!r || width <= 0 || height <= 0) { std::cout << "sweep: no picture " << name << " (" << (r ? "size" : "renderer") << ")\n"; return; }
     GdkPaintable* paint = gtk_widget_paintable_new(w);
     GtkSnapshot* snap = gtk_snapshot_new();
     gdk_paintable_snapshot(paint, GDK_SNAPSHOT(snap), width, height);
@@ -509,9 +608,9 @@ void Shell::sweep_shot(const std::string& name) {
             gdk_texture_save_to_png(tex, path.c_str());
             g_object_unref(tex);
             std::cout << "sweep: picture " << path << "\n";
-        }
+        } else std::cout << "sweep: no picture " << name << " (render)\n";
         gsk_render_node_unref(node);
-    }
+    } else std::cout << "sweep: no picture " << name << " (nothing drawn)\n";
     g_object_unref(paint);
 }
 

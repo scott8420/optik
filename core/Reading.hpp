@@ -23,6 +23,7 @@ struct ReadRequest {
     std::string scan_path;
     Rect        crop;
     int         turns = 0;      // s26
+    double      skew = 0.0;     // s29: the page's straightening (an area is read in it)
     Settings    settings;
     std::vector<std::string> book_words;   // s27: the spelling pass's own words
     // Set for an area re-read: which area, and the rectangle to read it from.
@@ -35,6 +36,8 @@ struct Reading {
     std::string page_id;
     Rect        crop;               // the page's look when asked (s26): a page
     int         turns = 0;          // re-cut or turned since gets nothing
+    double      skew = 0.0;         // s29: page: what it was measured at (0 if not deskewed);
+                                    // area: the page's when asked (re-straightened since: dropped)
     bool        ok = false;
     std::string why;
     std::vector<ocr::Area> areas;   // whole page

@@ -7,35 +7,29 @@
 namespace optik::core {
 
 bool load_picture(const std::string& path, const ocr::Rect& crop, int max_side, Picture& out) {
-    return load_picture(path, crop, 0, max_side, out);
+    return load_picture(path, ocr::Look{crop, 0}, max_side, out);
 }
 
 bool load_picture(const std::string& path, const ocr::Rect& crop, int turns, int max_side, Picture& out) {
+    return load_picture(path, ocr::Look{crop, turns}, max_side, out);
+}
+
+bool load_picture(const std::string& path, const ocr::Look& look, int max_side, Picture& out) {
     out = Picture{};
-    Pix* full = pixRead(path.c_str());
-    if (!full) return false;
-    Pix* part = full;
-    if (!crop.empty()) {
-        Box* b = boxCreate(crop.x0, crop.y0, crop.width(), crop.height());
-        part = pixClipRectangle(full, b, nullptr);
-        boxDestroy(&b);
-        if (!part) { pixDestroy(&full); return false; }
-    }
-    if ((turns & 3) != 0) {
-        Pix* turned = pixRotateOrth(part, turns & 3);
-        if (part != full) pixDestroy(&part);
-        if (!turned) { pixDestroy(&full); return false; }
-        part = turned;
-    }
+    Pix* part = ocr::cut_page(path, look.crop, look.turns);
+    if (!part) return false;
     const int w = int(pixGetWidth(part)), h = int(pixGetHeight(part));
     double s = 1.0;
     if (max_side > 0 && std::max(w, h) > max_side) s = double(max_side) / std::max(w, h);
 
     // Greyscale-aware scaling (area-averaged when reducing) reads better than
-    // nearest-neighbour on type; then to 32 bpp for the copy out.
+    // nearest-neighbour on type; then the look's tone and straightening (s29),
+    // then to 32 bpp for the copy out.
     Pix* scaled = s < 1.0 ? pixScaleSmooth(part, float(s), float(s)) : pixClone(part);
     if (!scaled) scaled = pixScale(part, float(s), float(s));
-    Pix* rgb = scaled ? pixConvertTo32(scaled) : nullptr;
+    Pix* toned = scaled ? ocr::tone(scaled, look) : nullptr;
+    Pix* straight = toned ? ocr::straighten(toned, look.skew) : nullptr;
+    Pix* rgb = straight ? pixConvertTo32(straight) : nullptr;
     bool ok = false;
     if (rgb) {
         out.width  = int(pixGetWidth(rgb));
@@ -58,9 +52,10 @@ bool load_picture(const std::string& path, const ocr::Rect& crop, int turns, int
         ok = out.valid();
         pixDestroy(&rgb);
     }
+    if (straight) pixDestroy(&straight);
+    if (toned) pixDestroy(&toned);
     if (scaled) pixDestroy(&scaled);
-    if (part != full) pixDestroy(&part);
-    pixDestroy(&full);
+    pixDestroy(&part);
     return ok;
 }
 

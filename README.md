@@ -25,11 +25,15 @@ proofs what is uncertain, and the book exports to ODT for LibreOffice Writer.
 - **The pages** -- move a page (Alt+Up / Alt+Down), turn it a quarter
   (Ctrl+] / Ctrl+[), delete it, or **Re-cut the Scan…**: one page or two, the
   cut dragged to the gutter. A turned or re-cut page is read again.
+- **Condition** -- before the engine (and on the screen): Deskew (the page's
+  tilt measured when read, the page and its words straightened), Decolour
+  (grey), Level (paper to white, ink to black). Book settings, each declinable.
 - **Undo** -- every change, Ctrl+Z / Ctrl+Shift+Z, from anywhere.
 - **Export** -- ODT (Text body + Heading 1, for Writer to restyle) or plain
   text. Running heads and folios left out; paragraphs broken by the page turn
   joined; line-end hyphens mended; formats as Writer's character styles. Each is
-  a Book setting.
+  a Book setting. (s29) Export asks first: which pages (All, This Page),
+  running heads kept or not, page breaks before headings or at each page.
 
 ## Build
 

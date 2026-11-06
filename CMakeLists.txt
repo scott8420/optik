@@ -33,7 +33,7 @@ if(OPTIK_SANITIZE)
 endif()
 
 # The build stamp the About line and the selftest print. Bumped per session.
-set(OPTIK_BUILD "s28")
+set(OPTIK_BUILD "s29")
 set(OPTIK_APP_ID "io.github.example.Optik")
 
 find_package(PkgConfig REQUIRED)
@@ -55,7 +55,7 @@ add_library(optik_image STATIC libs/scan/src/Image.cpp)
 target_link_libraries(optik_image PUBLIC optik_scan PkgConfig::LEPT)
 
 # -- libs/ocr -------------------------------------------------------------------
-add_library(optik_ocr STATIC libs/ocr/Ocr.cpp libs/ocr/Slant.cpp)
+add_library(optik_ocr STATIC libs/ocr/Ocr.cpp libs/ocr/Slant.cpp libs/ocr/Condition.cpp)
 target_include_directories(optik_ocr PUBLIC libs)
 target_link_libraries(optik_ocr PUBLIC PkgConfig::TESS PkgConfig::LEPT)
 
@@ -92,6 +92,8 @@ add_executable(optik_selftest
     tests/selftest_italic.cpp
     tests/selftest_find.cpp
     tests/selftest_format.cpp
+    tests/selftest_condition.cpp
+    tests/selftest_export.cpp
 )
 target_include_directories(optik_selftest PRIVATE tests)
 target_link_libraries(optik_selftest PRIVATE optik_core PkgConfig::ZIP)   # s27: reads an ODT back
