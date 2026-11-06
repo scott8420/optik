@@ -27,6 +27,7 @@
 #include "RecutWindow.hpp"
 #include "WidgetRegistry.hpp"
 #include "core/Audit.hpp"
+#include "core/Languages.hpp"
 #include "core/PageOps.hpp"
 
 #include <glibmm/main.h>
@@ -206,6 +207,62 @@ bool Shell::sweep_tick() {
             return m_export_opts.last == 0 && m_export_opts.first == 1 && ff > 0 &&
                    ff < int(m_book.pages().size());
         }));
+        // s30: the languages -- a second one ticked, the book's own unticked (the
+        // second becomes the book's), the last refused, undone to the start.
+        // Each through its own box; the list rebuilds on idle between steps.
+        auto lang_is = [this](std::function<bool(const std::string&)> want, std::string what) {
+            return [this, want, what] {
+                if (!want(m_book.meta().settings.language)) {
+                    ++m_sweep->fails;
+                    std::cout << "sweep FAIL languages: " << what << ", reads in '"
+                              << m_book.meta().settings.language << "'" << std::endl;
+                }
+            };
+        };
+        auto lang_box = [this](std::function<std::string()> code, bool on) {
+            return [this, code, on] {
+                const std::string c = code();
+                if (auto* b = dynamic_cast<Gtk::CheckButton*>(registry::find("settings.lang." + c))) b->set_active(on);
+                else { ++m_sweep->fails; std::cout << "sweep FAIL no box for language " << c << std::endl; }
+            };
+        };
+        auto start_lang = std::make_shared<std::string>();
+        auto other = std::make_shared<std::string>();
+        S.add("languages: the Book popover", [this, start_lang, other] {
+            *start_lang = m_book.meta().settings.language;
+            for (const auto& c : core::installed_codes())
+                if (c != *start_lang) { *other = c; break; }
+            activate_action("win.book-settings");
+        });
+        S.add("languages: a frame drawn", [] {});
+        S.add("languages: pictured", [this] { sweep_shot_of(m_settings_pop, "7_languages"); });
+        S.add("languages: a second ticked", [this, other, lang_box] {
+            if (other->empty()) { std::cout << "sweep: languages -- only one installed, not ticked\n"; return; }
+            lang_box([other] { return *other; }, true)();
+        });
+        S.add("languages: reads in both, the book's own first", lang_is([start_lang, other](const std::string& s) {
+            return other->empty() || s == *start_lang + "+" + *other; }, "not both"));
+        S.add("languages: the book's own unticked", [other, start_lang, lang_box] {
+            if (!other->empty()) lang_box([start_lang] { return *start_lang; }, false)();
+        });
+        S.add("languages: the second is the book's own", lang_is([start_lang, other](const std::string& s) {
+            return other->empty() || s == *other; }, "not the second alone"));
+        S.add("languages: the last unticked", [other, start_lang, lang_box] {
+            lang_box([other, start_lang] { return other->empty() ? *start_lang : *other; }, false)();
+        });
+        S.add("languages: the last is refused", [this, other, start_lang] {
+            const std::string c = other->empty() ? *start_lang : *other;
+            auto* b = dynamic_cast<Gtk::CheckButton*>(registry::find("settings.lang." + c));
+            if (m_book.meta().settings.language != c || !b || !b->get_active()) {
+                ++m_sweep->fails;
+                std::cout << "sweep FAIL languages: the last one went (reads in '"
+                          << m_book.meta().settings.language << "')" << std::endl;
+            }
+        });
+        S.add("languages: undone", [this, other] { if (!other->empty()) { undo(); undo(); } });
+        S.add("languages: back to the start", lang_is([start_lang](const std::string& s) {
+            return s == *start_lang; }, "not back"));
+        S.add("languages: closed", [this] { m_settings_pop.popdown(); });
         S.add("export: the defaults back", [this, tick] {
             activate_action("win.export");
             if (auto* c = dynamic_cast<Gtk::CheckButton*>(registry::find("export.heads"))) c->set_active(false);
@@ -369,6 +426,36 @@ void Shell::sweep_plan_page(int index) {
         find_replace_all();
     }});
     for (const char* a : {"win.undo", "win.undo", "win.redo", "win.undo"}) v.push_back({pg + a, act(a)});
+    // s30: grep -- a pattern walked and replaced (as sed: \1, &), undone; a bad
+    // pattern says so and makes no step.
+    v.push_back({pg + "grep: on, ^th(e|is)$", [this] {
+        m_find_grep.set_active(true);
+        m_find_q.set_text("^[Tt]h(e|is)$");
+        m_find_with.set_text("<&|\\1>");
+    }});
+    for (const char* a : {"win.find-next", "win.find-prev"}) v.push_back({pg + "grep: " + a, act(a)});
+    v.push_back({pg + "grep: Replace All", [this] {
+        const std::size_t pos = m_journal.position();
+        find_replace_all();
+        if (m_journal.position() != pos + 1) {
+            ++m_sweep->fails;
+            std::cout << "sweep FAIL grep: Replace All of ^[Tt]h(e|is)$ made no step" << std::endl;
+        }
+    }});
+    v.push_back({pg + "grep: undone", act("win.undo")});
+    v.push_back({pg + "grep: a bad pattern makes no step", [this] {
+        const std::size_t before = m_journal.size(), pos = m_journal.position();
+        m_find_q.set_text("th(e");
+        find_replace_all();
+        find_step(+1);
+        if (m_journal.size() != before || m_journal.position() != pos ||
+            m_find_n.get_text().find("pattern") == Glib::ustring::npos) {
+            ++m_sweep->fails;
+            std::cout << "sweep FAIL grep: a bad pattern made a step or said nothing ('"
+                      << m_find_n.get_text() << "')" << std::endl;
+        }
+    }});
+    v.push_back({pg + "grep: off", [this] { m_find_grep.set_active(false); m_find_with.set_text(""); }});
     v.push_back({pg + "find: closed", [this] { find_show(false); m_find_q.set_text(""); }});
     v.push_back({pg + "Book Settings, opened and closed", [this] {
         activate_action("win.book-settings");

@@ -4,6 +4,7 @@
 #include "Log.hpp"
 #include "core/Spell.hpp"
 #include "core/Export.hpp"
+#include "core/Languages.hpp"
 #include "model/Intake.hpp"
 
 #include <giomm/file.h>
@@ -373,12 +374,28 @@ void Shell::build_settings_popover() {
     box->set_margin(10);
 
     auto* lang_row = Gtk::make_managed<widgets::Box>("settings.lang.row", Gtk::Orientation::HORIZONTAL, 6);
-    auto* lang_lbl = Gtk::make_managed<widgets::Label>("settings.lang.label", "Language");
+    auto* lang_lbl = Gtk::make_managed<widgets::Label>("settings.lang.label", "Reads in");
     auto* lang = Gtk::make_managed<widgets::Entry>("settings.lang");
-    lang->set_tooltip_text("Tesseract language codes: eng, fra, deu, eng+fra ...");
-    lang->set_width_chars(10);
+    lang->set_tooltip_text("Tesseract's codes, joined with + (eng+fra); the first is the book's own, "
+                           "and its dictionary checks the spelling. Ticking below does the same");
+    lang->set_width_chars(14);
     lang_row->append(*lang_lbl);
     lang_row->append(*lang);
+
+    // s30 (milestone 19): the installed languages, ticked to read in. Rebuilt
+    // when what is installed or what the book reads in changes.
+    auto* langs = Gtk::make_managed<widgets::Box>("settings.langs", Gtk::Orientation::VERTICAL, 2);
+    auto* langs_scroll = Gtk::make_managed<widgets::ScrolledWindow>("settings.langs.scroll");
+    langs_scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
+    langs_scroll->set_max_content_height(170);
+    langs_scroll->set_propagate_natural_height(true);
+    langs_scroll->set_child(*langs);
+    auto* langs_hint = Gtk::make_managed<widgets::Label>("settings.langs.hint",
+        "More languages: tesseract-langpack-<code>; spelling: hunspell-<xx> (Fedora)");
+    langs_hint->add_css_class("dim-label");
+    langs_hint->set_halign(Gtk::Align::START);
+    auto langs_key = std::make_shared<std::string>();
+    auto langs_rebuild = std::make_shared<std::function<void()>>();
 
     auto* thr_row = Gtk::make_managed<widgets::Box>("settings.thr.row", Gtk::Orientation::HORIZONTAL, 6);
     auto* thr_lbl = Gtk::make_managed<widgets::Label>("settings.thr.label", "Check words under");
@@ -412,7 +429,7 @@ void Shell::build_settings_popover() {
     quotes->set_tooltip_text("Takes effect on the next read of a page");
     caps->set_tooltip_text("Takes effect on the next read of a page");
 
-    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, thr_row, split, deskew, decol, level, heads, heads2, quotes, caps, ital, spell, join, hyph})
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, langs_scroll, langs_hint, thr_row, split, deskew, decol, level, heads, heads2, quotes, caps, ital, spell, join, hyph})
         box->append(*w);
     m_settings_pop.set_child(*box);
     m_settings_pop.set_parent(m_title);   // ☰ -> Book Settings… points it at the title
@@ -423,6 +440,7 @@ void Shell::build_settings_popover() {
         *quiet = true;
         const auto& s = m_book.meta().settings;
         lang->set_text(s.language);
+        if (*langs_rebuild) (*langs_rebuild)();
         thr->set_value(s.uncertain_below);
         split->set_active(s.split_spreads);
         heads->set_active(s.mark_running_heads);
@@ -456,6 +474,47 @@ void Shell::build_settings_popover() {
         }
         // The tone changes how every page looks (s29): new pictures and thumbs.
         if (label == "Decolour" || label == "Level") refresh_page(m_page_id);
+        // s30: the list, the codes and the dictionary say the new languages --
+        // on idle: a tick's own box is rebuilt, and must not go in its handler.
+        if (label.rfind("Language ", 0) == 0)
+            Glib::signal_idle().connect_once([this] { if (m_settings_sync) m_settings_sync(); });
+    };
+    *langs_rebuild = [=, this] {
+        const std::string setting = m_book.meta().settings.language;
+        const std::vector<std::string> installed = core::installed_codes();
+        std::string key = setting + "|";
+        for (const auto& c : installed) key += c + ",";
+        if (key == *langs_key) return;
+        *langs_key = key;
+        while (Gtk::Widget* c = langs->get_first_child()) langs->remove(*c);
+        const std::vector<std::string> reading = core::split_languages(setting);
+        for (const core::Language& l : core::languages_for(setting, installed)) {
+            std::string text = l.name + "  (" + l.code + ")";
+            if (!l.installed) text += "  -- not installed here";
+            else if (l.dictionary.empty()) text += "  -- no spelling dictionary";
+            auto* c = Gtk::make_managed<widgets::CheckButton>("settings.lang." + l.code, text);
+            const bool on = std::find(reading.begin(), reading.end(), l.code) != reading.end();
+            c->set_active(on);
+            if (on && !reading.empty() && reading[0] == l.code)
+                c->set_tooltip_text("The book's own language: its dictionary checks the spelling");
+            else if (!l.dictionary.empty())
+                c->set_tooltip_text("Spelling dictionary: " + l.dictionary);
+            const std::string code = l.code;
+            c->signal_toggled().connect([=, this] {
+                if (*quiet || !m_has_book) return;
+                const std::string was = m_book.meta().settings.language;
+                const std::string now = core::with_language(was, code, c->get_active());
+                if (now == was) {          // the last one: a book reads in something
+                    *quiet = true;
+                    c->set_active(true);
+                    *quiet = false;
+                    say("A book reads in at least one language.");
+                    return;
+                }
+                change("Language " + now, [now](core::Settings& s) { s.language = now; });
+            });
+            langs->append(*c);
+        }
     };
     lang->signal_activate().connect([=] {
         const std::string v = lang->get_text();

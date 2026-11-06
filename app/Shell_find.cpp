@@ -1,7 +1,7 @@
 // Shell_find.cpp -- find and replace across the book (s27, milestone 15).
 //
 // A bar over the panes (Ctrl+F; Esc closes): Find, Replace with, Match case,
-// Whole words, Previous / Next, Replace / Replace All, and "3 of 27". A match is
+// Whole words, Grep (s30: the query a grep -E pattern), Previous / Next, Replace / Replace All, and "3 of 27". A match is
 // shown as the current word in both panes, the way F4 shows a word to check;
 // focus stays in the bar, so Enter walks on. Replace All is one step.
 #include "Shell.hpp"
@@ -43,7 +43,7 @@ void Shell::build_find() {
     shut->set_tooltip_text("Close (Esc)");
 
     for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{&m_find_q, prev, next, &m_find_with, one, all,
-                                                             &m_find_case, &m_find_whole, &m_find_n})
+                                                             &m_find_case, &m_find_whole, &m_find_grep, &m_find_n})
         row->append(*w);
     auto* gap = Gtk::make_managed<widgets::Box>("find.gap", Gtk::Orientation::HORIZONTAL, 0);
     gap->set_hexpand(true);
@@ -64,6 +64,9 @@ void Shell::build_find() {
     m_find_q.signal_changed().connect([this] { find_count(); refresh_actions(); });
     m_find_case.signal_toggled().connect([this] { find_count(); });
     m_find_whole.signal_toggled().connect([this] { find_count(); });
+    m_find_grep.set_tooltip_text("Find a grep -E pattern in each word: . [a-z] * + ? {2} | ( ) ^ $ \\< \\>.\n"
+                                 "Replace with \\1..\\9 for a group, & for the whole match (as sed)");
+    m_find_grep.signal_toggled().connect([this] { find_count(); refresh_actions(); });
 
     // Shift+Enter in Find goes back.
     auto keys = Gtk::EventControllerKey::create();
@@ -94,13 +97,21 @@ core::FindOptions Shell::find_options() const {
     core::FindOptions o;
     o.match_case  = m_find_case.get_active();
     o.whole_words = m_find_whole.get_active();
+    o.grep        = m_find_grep.get_active();
     return o;
 }
 
 // "3 of 27": where the current word stands among the matches.
 void Shell::find_count() {
     const std::string q = m_find_q.get_text();
+    m_find_q.remove_css_class("error");
     if (!m_has_book || q.empty()) { m_find_n.set_text(""); return; }
+    std::string why;
+    if (!core::pattern_ok(q, find_options(), &why)) {   // s30: say what grep would
+        m_find_q.add_css_class("error");
+        m_find_n.set_text("pattern: " + why);
+        return;
+    }
     const auto hits = core::find_all(m_book, q, find_options());
     if (hits.empty()) { m_find_n.set_text("not found"); return; }
     int at = 0;
@@ -116,6 +127,7 @@ void Shell::find_step(int dir) {
     m_text.commit_now();
     const std::string q = m_find_q.get_text();
     if (!m_has_book || q.empty()) { find_show(true); return; }
+    if (std::string why; !core::pattern_ok(q, find_options(), &why)) { say("The pattern will not do: " + why + "."); return; }
     const auto hits = core::find_all(m_book, q, find_options());
     if (hits.empty()) { say("“" + q + "” is not in the book."); find_count(); return; }
 
@@ -162,6 +174,7 @@ void Shell::find_replace_all() {
     const std::string q = m_find_q.get_text();
     if (!m_has_book || q.empty()) return;
     const auto o = find_options();
+    if (std::string why; !core::pattern_ok(q, o, &why)) { say("The pattern will not do: " + why + "."); return; }
     const auto hits = core::find_all(m_book, q, o);
     if (hits.empty()) { say("“" + q + "” is not in the book."); return; }
     const std::string with = m_find_with.get_text();

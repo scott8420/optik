@@ -202,6 +202,7 @@ private:
     widgets::Entry     m_find_with{"find.with"};
     widgets::CheckButton m_find_case{"find.case", "Match case"};
     widgets::CheckButton m_find_whole{"find.whole", "Whole words"};
+    widgets::CheckButton m_find_grep{"find.grep", "Grep"};       // s30: the query is a grep -E pattern
     widgets::Label     m_find_n{"find.count"};
     Gtk::Popover       m_settings_pop;
     std::function<void()> m_settings_sync;

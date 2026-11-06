@@ -108,4 +108,71 @@ void find_tests() {
         check("replace: a stale hit is skipped", !changed);
         fs::remove_all(dir, ec);
     }
+
+    std::cout << "-- find: grep (s30, Scott)\n";
+    {
+        core::FindOptions g;
+        g.grep = true;
+        core::FindOptions gc = g;
+        gc.match_case = true;
+        core::FindOptions gw = g;
+        gw.whole_words = true;
+        std::string why;
+        check("grep: a class and a repeat", core::find_in("x1y22z333", "[0-9]+", g) == std::vector<std::size_t>{1, 3, 6});
+        check("grep: alternation", core::find_in("tbe", "t(b|h)e", g).size() == 1 && core::find_in("the", "t(b|h)e", g).size() == 1);
+        check("grep: ^ and $ are the word's ends", core::find_in("rnore", "^rn", g).size() == 1 &&
+              core::find_in("barn", "^rn", g).empty() && core::find_in("barn", "rn$", g).size() == 1);
+        check("grep: ^ is not found again later in the word", core::find_in("aaa", "^a", g).size() == 1);
+        check("grep: case aside by default, kept on Match case",
+              core::find_in("Tbe", "tbe", g).size() == 1 && core::find_in("Tbe", "tbe", gc).empty());
+        check("grep: an empty match is not a hit, and does not hang", core::find_in("abc", "x*", g).empty() &&
+              core::find_in("abc", "b*", g) == std::vector<std::size_t>{1});
+        check("grep: whole words holds for a pattern too",
+              core::find_in("other", "th[ae]", gw).empty() && core::find_in("\xE2\x80\x9Cthe,", "th[ae]", gw).size() == 1);
+        check("grep: a dot is any byte, a backslash makes it a dot",
+              core::find_in("a.b", "a\\.b", g).size() == 1 && core::find_in("axb", "a\\.b", g).empty());
+        check("grep: a bad pattern says why", !core::pattern_ok("t(b", g, &why) && !why.empty(), why);
+        check("grep: a bad pattern finds nothing (no throw)", core::find_in("tbe", "t(b", g).empty());
+        check("grep: off, the same query is plain text", core::find_in("t(b", "t(b", core::FindOptions{}).size() == 1 &&
+              core::pattern_ok("t(b", core::FindOptions{}));
+        int n = 0;
+        check("replace grep: the match as written", core::replace_in("rnay", "^rn", "m", g, &n) == "may" && n == 1);
+        check("replace grep: \\1 is a group", core::replace_in("Nancv", "(Nanc)v", "\\1y", g) == "Nancy");
+        check("replace grep: & is the whole match, \\& an ampersand",
+              core::replace_in("12", "[0-9]+", "<&>", g) == "<12>" && core::replace_in("a", "a", "\\&", g) == "&");
+        check("replace grep: every match in the word", core::replace_in("1a2b3", "[0-9]", "#", g, &n) == "#a#b#" && n == 3);
+        check("replace plain: & and \\1 are themselves", core::replace_in("tbe", "tbe", "&\\1", core::FindOptions{}) == "&\\1");
+
+        const fs::path dir = fs::temp_directory_path() / ("optik_selftest_grep_" + std::to_string(::getpid()));
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        core::Book b;
+        core::Book::create(dir.string(), "", b);
+        core::Journal j;
+        j.run(b, "pages", [](core::Edit& e) {
+            core::Page p;
+            p.scan_id = e.add_scan(core::Scan{"", "x.png", "x.png"}).id;
+            p.crop = {0, 0, 100, 100};
+            p.read = true;
+            p.areas.push_back(area_of({{"rnore", "tbe", "barn"}, {"Nancv", "12", "tbe."}}));
+            e.insert_page(0, p);
+            p.areas = {area_of({{"tbe", "rnay"}})};
+            e.insert_page(1, p);
+        });
+        const auto hits = core::find_all(b, "^(tb|rn)", g);
+        check("grep all: every word, in book order", hits.size() == 5 && at(b, hits[0]) == "rnore" &&
+              at(b, hits[4]) == "rnay", std::to_string(hits.size()));
+        int done = 0;
+        j.run(b, "Replace All", [&](core::Edit& e) { done = core::replace_hits(e, hits, "^tb", "th", g); });
+        const auto after = core::find_all(b, "^th", g);
+        check("grep all: replaced where the pattern holds, one step", done == 3 && after.size() == 3 && j.size() == 2,
+              std::to_string(done));
+        check("grep all: the engine's reading kept as the original",
+              b.pages()[0].areas[0].paras[0].lines[0].words[1].original == "tbe" &&
+              b.pages()[0].areas[0].paras[0].lines[0].words[1].edited);
+        j.undo(b);
+        check("grep all: undone whole", core::find_all(b, "^tb", g).size() == 3);
+        check("grep all: a bad pattern finds nothing in the book", core::find_all(b, "(", g).empty());
+        fs::remove_all(dir, ec);
+    }
 }

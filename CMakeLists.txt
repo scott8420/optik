@@ -33,7 +33,7 @@ if(OPTIK_SANITIZE)
 endif()
 
 # The build stamp the About line and the selftest print. Bumped per session.
-set(OPTIK_BUILD "s29")
+set(OPTIK_BUILD "s30")
 set(OPTIK_APP_ID "io.github.example.Optik")
 
 find_package(PkgConfig REQUIRED)
@@ -74,6 +74,7 @@ add_library(optik_core STATIC
     core/Spell.cpp
     core/Find.cpp
     core/Format.cpp
+    core/Languages.cpp
 )
 target_include_directories(optik_core PUBLIC . libs PRIVATE third_party)
 target_link_libraries(optik_core PUBLIC optik_image optik_ocr Threads::Threads
@@ -94,6 +95,7 @@ add_executable(optik_selftest
     tests/selftest_format.cpp
     tests/selftest_condition.cpp
     tests/selftest_export.cpp
+    tests/selftest_languages.cpp
 )
 target_include_directories(optik_selftest PRIVATE tests)
 target_link_libraries(optik_selftest PRIVATE optik_core PkgConfig::ZIP)   # s27: reads an ODT back

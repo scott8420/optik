@@ -22,6 +22,7 @@ void find_tests();
 void format_tests();
 void condition_tests();
 void export_tests();
+void languages_tests();
 
 namespace optik::test {
 static int g_pass = 0, g_fail = 0;
@@ -50,6 +51,7 @@ int main() {
     format_tests();
     condition_tests();
     export_tests();
+    languages_tests();
     std::cout << "---------------------------------\n";
     std::cout << optik::test::passes() << " pass / " << optik::test::failures() << " fail\n";
     return optik::test::failures() == 0 ? 0 : 1;

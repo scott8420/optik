@@ -21,7 +21,11 @@ proofs what is uncertain, and the book exports to ODT for LibreOffice Writer.
   Superscript (Ctrl+B / I / U, Ctrl+Shift+K / P) on the selected words; Heading
   (Ctrl+Shift+H) for the area. The arrows turn the page outside the text.
 - **Find and Replace** -- Ctrl+F: across the book, Enter / Shift+Enter to walk
-  the matches, Replace All as one undoable step.
+  the matches, Replace All as one undoable step. **Grep** (s30): the query is
+  a grep -E pattern; the replacement takes \1..\9 and & as sed does.
+- **Languages** -- the Book popover lists the installed Tesseract languages to
+  tick (eng+fra); the first is the book's own, and its dictionary checks the
+  spelling.
 - **The pages** -- move a page (Alt+Up / Alt+Down), turn it a quarter
   (Ctrl+] / Ctrl+[), delete it, or **Re-cut the Scan…**: one page or two, the
   cut dragged to the gutter. A turned or re-cut page is read again.

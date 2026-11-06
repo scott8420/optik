@@ -22,6 +22,13 @@ std::string dictionary_for(const std::string& language) {
         {"ita", {"it_IT", "it"}},
         {"por", {"pt_PT", "pt_BR"}},
         {"nld", {"nl_NL", "nl"}},
+        // s30: the rest the Book popover may list
+        {"rus", {"ru_RU", "ru"}}, {"pol", {"pl_PL", "pl"}}, {"tur", {"tr_TR", "tr"}},
+        {"ces", {"cs_CZ", "cs"}}, {"dan", {"da_DK", "da"}}, {"swe", {"sv_SE", "sv"}},
+        {"nor", {"nb_NO", "no_NO", "nn_NO"}}, {"hun", {"hu_HU", "hu"}}, {"ukr", {"uk_UA", "uk"}},
+        {"ell", {"el_GR", "el"}}, {"heb", {"he_IL", "he"}}, {"ind", {"id_ID", "id"}},
+        {"vie", {"vi_VN", "vi"}}, {"ron", {"ro_RO", "ro"}}, {"cat", {"ca_ES", "ca"}},
+        {"lat", {"la"}}, {"slk", {"sk_SK", "sk"}}, {"hrv", {"hr_HR", "hr"}},
     };
     std::vector<std::string> dirs;
     if (const char* env = std::getenv("DICPATH")) {

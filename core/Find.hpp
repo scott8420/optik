@@ -22,7 +22,18 @@ namespace optik::core {
 struct FindOptions {
     bool match_case  = false;   // off: A-Z and a-z are the same (ASCII)
     bool whole_words = false;   // on: not inside a longer run of letters / digits
+    // s30 (Scott: "search should have grep"): the query is a grep -E pattern
+    // (POSIX extended, glibc's regcomp -- grep's own engine): . [..] * + ? {n}
+    // | ( ) ^ $ \< \> \b. Matched against each word, as a plain query is: ^ is
+    // the word's start, $ its end. The replacement may use \1..\9 and & (the
+    // whole match), as sed does; \\ and \& are themselves. An empty match is
+    // not a hit.
+    bool grep = false;
 };
+
+// A grep pattern that will not compile says why (regerror's words); a plain
+// query is always good.
+bool pattern_ok(const std::string& q, const FindOptions& o, std::string* why = nullptr);
 
 struct Hit {
     std::string page_id;
@@ -36,7 +47,8 @@ std::vector<std::size_t> find_in(const std::string& text, const std::string& q, 
 // Every word of the book holding `q`, in book order.
 std::vector<Hit> find_all(const Book& book, const std::string& q, const FindOptions& o);
 
-// `text` with every occurrence of `q` replaced by `with`; *n = how many.
+// `text` with every occurrence of `q` replaced by `with` (grep: with \1..\9, &
+// filled in from each match); *n = how many.
 std::string replace_in(const std::string& text, const std::string& q, const std::string& with,
                        const FindOptions& o, int* n = nullptr);
 
