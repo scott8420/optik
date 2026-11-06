@@ -159,19 +159,60 @@ void find_tests() {
             p.areas = {area_of({{"tbe", "rnay"}})};
             e.insert_page(1, p);
         });
-        const auto hits = core::find_all(b, "^(tb|rn)", g);
-        check("grep all: every word, in book order", hits.size() == 5 && at(b, hits[0]) == "rnore" &&
-              at(b, hits[4]) == "rnay", std::to_string(hits.size()));
+        // Lines: "rnore tbe barn" / "Nancv 12 tbe." on page 1, "tbe rnay" on page 2.
+        check("grep line: ^ is the line's start", core::find_all(b, "^(tb|rn)", g).size() == 2);
+        const auto dot = core::find_all(b, "\\.$", g);
+        check("grep line: $ is the line's end, the hit its last word",
+              dot.size() == 1 && at(b, dot[0]) == "tbe.");
+        check("grep line: a phrase across words is found at its first word",
+              core::find_all(b, "Nancv [0-9]+", g).size() == 1 && at(b, core::find_all(b, "Nancv [0-9]+", g)[0]) == "Nancv");
+        const auto hits = core::find_all(b, "tbe", g);
+        check("grep all: every word, in book order", hits.size() == 3, std::to_string(hits.size()));
         int done = 0;
-        j.run(b, "Replace All", [&](core::Edit& e) { done = core::replace_hits(e, hits, "^tb", "th", g); });
-        const auto after = core::find_all(b, "^th", g);
-        check("grep all: replaced where the pattern holds, one step", done == 3 && after.size() == 3 && j.size() == 2,
+        j.run(b, "Replace All", [&](core::Edit& e) { done = core::replace_hits(e, hits, "tbe", "the", g); });
+        check("grep all: replaced, one step", done == 3 && core::find_all(b, "the", g).size() == 3 && j.size() == 2,
               std::to_string(done));
-        check("grep all: the engine's reading kept as the original",
-              b.pages()[0].areas[0].paras[0].lines[0].words[1].original == "tbe" &&
-              b.pages()[0].areas[0].paras[0].lines[0].words[1].edited);
+        const auto& w1 = b.pages()[0].areas[0].paras[0].lines[0].words;
+        check("grep all: the engine's reading kept as the original", w1[1].original == "tbe" && w1[1].edited &&
+              !w1[0].edited && !w1[2].edited);
         j.undo(b);
-        check("grep all: undone whole", core::find_all(b, "^tb", g).size() == 3);
+        check("grep all: undone whole", core::find_all(b, "tbe", g).size() == 3);
+
+        auto line = [&](int pg, int ln) {
+            std::string s;
+            for (const auto& w : b.pages()[std::size_t(pg)].areas[0].paras[0].lines[std::size_t(ln)].words)
+                s += "[" + w.text + "]";
+            return s;
+        };
+        j.run(b, "phrase", [&](core::Edit& e) {
+            core::replace_hits(e, core::find_all(b, "Nancv ([0-9]+)", g), "Nancv ([0-9]+)", "Nancy, \\1", g); });
+        check("replace line: a phrase dealt back word for word", line(0, 1) == "[Nancy,][12][tbe.]", line(0, 1));
+        j.run(b, "join", [&](core::Edit& e) {
+            core::replace_hits(e, core::find_all(b, "tbe barn", g), "tbe barn", "the-barn", g); });
+        check("replace line: one word for two -- the second emptied", line(0, 0) == "[rnore][the-barn][]", line(0, 0));
+        check("replace line: an emptied word is out of the line's text",
+              core::find_all(b, "the-barn$", g).size() == 1);
+        j.undo(b);
+        j.run(b, "more", [&](core::Edit& e) {
+            core::replace_hits(e, core::find_all(b, "barn", g), "barn", "big barn", g); });
+        check("replace line: two words for one -- the last takes the extra", line(0, 0) == "[rnore][tbe][big barn]",
+              line(0, 0));
+        j.undo(b);
+        j.run(b, "space2", [&](core::Edit& e) {
+            core::replace_hits(e, core::find_all(b, "e t", g), "e t", "et", g); });
+        check("replace line: a match on the space joins the two words", line(0, 0) == "[rnoretbe][][barn]", line(0, 0));
+        j.undo(b);
+        const auto two = core::find_all(b, "b", g);   // rnore tbe barn: tbe, barn (and more)
+        std::vector<core::Hit> just;
+        for (const auto& h : two) if (h.page_id == b.pages()[0].id && h.line == 0 && h.word == 2) just.push_back(h);
+        j.run(b, "one", [&](core::Edit& e) { core::replace_hits(e, just, "b", "B", g); });
+        check("replace line: one hit replaces only the matches beginning in its word",
+              line(0, 0) == "[rnore][tbe][Barn]", line(0, 0));
+        j.undo(b);
+        const auto rs = core::find_all(b, "r", g);
+        check("grep line: two matches in one word are one hit", rs.size() == 3, std::to_string(rs.size()));
+        j.run(b, "rR", [&](core::Edit& e) { core::replace_hits(e, rs, "r", "R", g); });
+        check("replace line: two matches in one word both land", line(0, 0) == "[RnoRe][tbe][baRn]", line(0, 0));
         check("grep all: a bad pattern finds nothing in the book", core::find_all(b, "(", g).empty());
         fs::remove_all(dir, ec);
     }

@@ -22,7 +22,8 @@ proofs what is uncertain, and the book exports to ODT for LibreOffice Writer.
   (Ctrl+Shift+H) for the area. The arrows turn the page outside the text.
 - **Find and Replace** -- Ctrl+F: across the book, Enter / Shift+Enter to walk
   the matches, Replace All as one undoable step. **Grep** (s30): the query is
-  a grep -E pattern; the replacement takes \1..\9 and & as sed does.
+  a grep -E pattern on each line (^ its start, $ its end, phrases across
+  words); the replacement takes \1..\9 and & as sed does.
 - **Languages** -- the Book popover lists the installed Tesseract languages to
   tick (eng+fra); the first is the book's own, and its dictionary checks the
   spelling.

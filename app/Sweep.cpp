@@ -428,10 +428,10 @@ void Shell::sweep_plan_page(int index) {
     for (const char* a : {"win.undo", "win.undo", "win.redo", "win.undo"}) v.push_back({pg + a, act(a)});
     // s30: grep -- a pattern walked and replaced (as sed: \1, &), undone; a bad
     // pattern says so and makes no step.
-    v.push_back({pg + "grep: on, ^th(e|is)$", [this] {
+    v.push_back({pg + "grep: on, ^([A-Z])", [this] {
         m_find_grep.set_active(true);
-        m_find_q.set_text("^[Tt]h(e|is)$");
-        m_find_with.set_text("<&|\\1>");
+        m_find_q.set_text("^([A-Z])");
+        m_find_with.set_text("<\\1|&>");
     }});
     for (const char* a : {"win.find-next", "win.find-prev"}) v.push_back({pg + "grep: " + a, act(a)});
     v.push_back({pg + "grep: Replace All", [this] {
@@ -439,7 +439,7 @@ void Shell::sweep_plan_page(int index) {
         find_replace_all();
         if (m_journal.position() != pos + 1) {
             ++m_sweep->fails;
-            std::cout << "sweep FAIL grep: Replace All of ^[Tt]h(e|is)$ made no step" << std::endl;
+            std::cout << "sweep FAIL grep: Replace All of ^([A-Z]) made no step" << std::endl;
         }
     }});
     v.push_back({pg + "grep: undone", act("win.undo")});

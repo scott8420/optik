@@ -2,7 +2,9 @@
 
 #include <regex.h>
 
+#include <algorithm>
 #include <memory>
+#include <set>
 
 namespace optik::core {
 
@@ -147,6 +149,44 @@ std::vector<std::size_t> find_in(const std::string& text, const std::string& q, 
     return at;
 }
 
+namespace {
+
+// A line as grep sees it (s30, Scott: "^ or $ of a line"): its words' texts
+// joined by one space, and where each word lies in it. Empty words are not in it.
+struct LineText {
+    std::string text;
+    std::vector<std::size_t> word, start, end;   // per word in the text
+};
+LineText line_text(const std::vector<ocr::Word>& ws) {
+    LineText t;
+    for (std::size_t w = 0; w < ws.size(); ++w) {
+        if (ws[w].text.empty()) continue;
+        if (!t.text.empty()) t.text += ' ';
+        t.word.push_back(w);
+        t.start.push_back(t.text.size());
+        t.text += ws[w].text;
+        t.end.push_back(t.text.size());
+    }
+    return t;
+}
+// The word (index into t.word) a match starting at `at` begins in: the one
+// holding it, or -- at a space -- the word before the space.
+std::size_t first_word(const LineText& t, std::size_t at) {
+    std::size_t k = 0;
+    while (k + 1 < t.start.size() && t.start[k + 1] <= at) ++k;
+    return k;
+}
+// ...and the one it ends in (its last byte): holding it, or -- a space -- the
+// word after.
+std::size_t last_word(const LineText& t, std::size_t end) {
+    const std::size_t b = end - 1;
+    for (std::size_t k = 0; k < t.start.size(); ++k)
+        if (b < t.end[k]) return k;
+    return t.start.size() - 1;
+}
+
+}  // namespace
+
 std::vector<Hit> find_all(const Book& book, const std::string& q, const FindOptions& o) {
     std::vector<Hit> out;
     if (q.empty()) return out;
@@ -159,6 +199,17 @@ std::vector<Hit> find_all(const Book& book, const std::string& q, const FindOpti
             for (std::size_t r = 0; r < p.areas[a].paras.size(); ++r)
                 for (std::size_t l = 0; l < p.areas[a].paras[r].lines.size(); ++l) {
                     const auto& ws = p.areas[a].paras[r].lines[l].words;
+                    if (o.grep) {
+                        // The line's text: a hit is the word each match begins in, once.
+                        const LineText t = line_text(ws);
+                        int last = -1;
+                        for (const Span& s : spans(t.text, q, o, re.get())) {
+                            const int w = int(t.word[first_word(t, s.at)]);
+                            if (w != last) out.push_back(Hit{p.id, int(a), int(r), int(l), w});
+                            last = w;
+                        }
+                        continue;
+                    }
                     for (std::size_t w = 0; w < ws.size(); ++w)
                         if (!spans(ws[w].text, q, o, re.get()).empty())
                             out.push_back(Hit{p.id, int(a), int(r), int(l), int(w)});
@@ -182,9 +233,95 @@ std::string replace_in(const std::string& text, const std::string& q, const std:
     return out;
 }
 
+namespace {
+
+void set_text(ocr::Word& w, const std::string& now) {
+    if (w.text == now) return;
+    if (!w.edited) w.original = w.text;
+    w.text = now;
+    w.edited = w.text != w.original;
+    if (!w.edited) w.original.clear();
+}
+
+// Grep's replace on one line: the matches that begin in a hit word, each
+// rewriting the stretch of words it touches -- the stretch's text with the
+// match replaced, split at its spaces and dealt back to the same words in
+// order (the last takes any extra; words left over are emptied). Matches that
+// touch a shared word are one stretch. Returns the matches replaced.
+int replace_line(std::vector<ocr::Word>& ws, const std::set<int>& at_words, const std::string& q,
+                 const std::string& with, const FindOptions& o) {
+    const LineText t = line_text(ws);
+    std::vector<Span> picked;
+    for (Span& s : spans(t.text, q, o))
+        if (at_words.count(int(t.word[first_word(t, s.at)]))) picked.push_back(std::move(s));
+    if (picked.empty()) return 0;
+    // Stretches: consecutive matches whose words meet or overlap.
+    struct Stretch { std::size_t i, j; std::vector<const Span*> m; };
+    std::vector<Stretch> st;
+    for (const Span& s : picked) {
+        const std::size_t i = first_word(t, s.at), j = std::max(i, last_word(t, s.at + s.len));
+        if (!st.empty() && i <= st.back().j) { st.back().j = std::max(st.back().j, j); st.back().m.push_back(&s); }
+        else st.push_back({i, j, {&s}});
+    }
+    for (auto it = st.rbegin(); it != st.rend(); ++it) {
+        const std::size_t from = t.start[it->i], to = t.end[it->j];
+        std::string now;
+        std::size_t pos = from;
+        for (const Span* s : it->m) {
+            now.append(t.text, pos, s->at - pos);
+            now += filled(with, t.text, *s);
+            pos = s->at + s->len;
+        }
+        now.append(t.text, pos, to - pos);
+        std::vector<std::string> parts;
+        for (std::size_t a = 0; a <= now.size();) {
+            const std::size_t b = std::min(now.find(' ', a), now.size());
+            if (b > a) parts.push_back(now.substr(a, b - a));
+            a = b + 1;
+        }
+        const std::size_t n = it->j - it->i + 1;
+        for (std::size_t k = 0; k < n; ++k) {
+            std::string text;
+            if (k + 1 < n) { if (k < parts.size()) text = parts[k]; }
+            else for (std::size_t m = k; m < parts.size(); ++m) text += (m > k ? " " : "") + parts[m];
+            set_text(ws[t.word[it->i + k]], text);
+        }
+    }
+    return int(picked.size());
+}
+
+}  // namespace
+
 int replace_hits(Edit& e, const std::vector<Hit>& hits, const std::string& q,
                  const std::string& with, const FindOptions& o) {
     int total = 0;
+    if (o.grep) {
+        // By line, each once, with the words its hits begin in.
+        std::vector<std::pair<Hit, std::set<int>>> lines;
+        for (const Hit& h : hits) {
+            Hit key = h;
+            key.word = -1;
+            auto f = std::find_if(lines.begin(), lines.end(), [&](const auto& x) { return x.first == key; });
+            if (f == lines.end()) lines.push_back({key, {h.word}});
+            else f->second.insert(h.word);
+        }
+        for (const auto& [h, words] : lines) {
+            const Page* look = e.book().page(h.page_id);
+            if (!look || h.area < 0 || h.area >= int(look->areas.size())) continue;
+            const auto& a = look->areas[std::size_t(h.area)];
+            if (h.para < 0 || h.para >= int(a.paras.size())) continue;
+            const auto& p = a.paras[std::size_t(h.para)];
+            if (h.line < 0 || h.line >= int(p.lines.size())) continue;
+            // Work on a copy; write only if something changed (a stale hit is no step).
+            std::vector<ocr::Word> ws = p.lines[std::size_t(h.line)].words;
+            const int n = replace_line(ws, words, q, with, o);
+            if (n == 0 || ws == p.lines[std::size_t(h.line)].words) continue;
+            e.page(h.page_id).areas[std::size_t(h.area)].paras[std::size_t(h.para)]
+                .lines[std::size_t(h.line)].words = std::move(ws);
+            total += n;
+        }
+        return total;
+    }
     for (const Hit& h : hits) {
         const Page* look = e.book().page(h.page_id);
         if (!look || h.area < 0 || h.area >= int(look->areas.size())) continue;
@@ -197,12 +334,8 @@ int replace_hits(Edit& e, const std::vector<Hit>& hits, const std::string& q,
         int n = 0;
         const std::string now = replace_in(ws[std::size_t(h.word)].text, q, with, o, &n);
         if (n == 0) continue;
-        ocr::Word& w = e.page(h.page_id).areas[std::size_t(h.area)].paras[std::size_t(h.para)]
-                           .lines[std::size_t(h.line)].words[std::size_t(h.word)];
-        if (!w.edited) w.original = w.text;
-        w.text = now;
-        w.edited = w.text != w.original;
-        if (!w.edited) w.original.clear();
+        set_text(e.page(h.page_id).areas[std::size_t(h.area)].paras[std::size_t(h.para)]
+                     .lines[std::size_t(h.line)].words[std::size_t(h.word)], now);
         total += n;
     }
     return total;

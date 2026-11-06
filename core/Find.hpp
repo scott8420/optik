@@ -24,10 +24,15 @@ struct FindOptions {
     bool whole_words = false;   // on: not inside a longer run of letters / digits
     // s30 (Scott: "search should have grep"): the query is a grep -E pattern
     // (POSIX extended, glibc's regcomp -- grep's own engine): . [..] * + ? {n}
-    // | ( ) ^ $ \< \> \b. Matched against each word, as a plain query is: ^ is
-    // the word's start, $ its end. The replacement may use \1..\9 and & (the
-    // whole match), as sed does; \\ and \& are themselves. An empty match is
-    // not a hit.
+    // | ( ) ^ $ \< \> \b. Matched against each LINE's text -- its words joined
+    // by one space -- so ^ is the line's start and $ its end (Scott), and a
+    // pattern may run across words. A hit is the word a match begins in. The
+    // replacement may use \1..\9 and & (the whole match), as sed does (a
+    // doubled backslash and \& are themselves). Replacing rewrites the words the match touches:
+    // their text with the match replaced, split at the spaces and dealt back
+    // to the same words (the last takes any extra; leftovers are emptied -- a
+    // match on the space between two words joins them). An empty match is not
+    // a hit.
     bool grep = false;
 };
 
@@ -44,7 +49,8 @@ struct Hit {
 // Where `q` occurs in `text` (byte offsets), by the options. Empty q: nowhere.
 std::vector<std::size_t> find_in(const std::string& text, const std::string& q, const FindOptions& o);
 
-// Every word of the book holding `q`, in book order.
+// Every word of the book holding `q` (grep: every word a match begins in), in
+// book order.
 std::vector<Hit> find_all(const Book& book, const std::string& q, const FindOptions& o);
 
 // `text` with every occurrence of `q` replaced by `with` (grep: with \1..\9, &
@@ -52,8 +58,8 @@ std::vector<Hit> find_all(const Book& book, const std::string& q, const FindOpti
 std::string replace_in(const std::string& text, const std::string& q, const std::string& with,
                        const FindOptions& o, int* n = nullptr);
 
-// Replaces in the words `hits` names (a hit gone stale is skipped), as the
-// author's edits. Returns the occurrences replaced. Call inside Journal::run.
+// Replaces in the words `hits` names (grep: the matches beginning in them, on
+// their lines) -- a hit gone stale is skipped -- as the author's edits. Returns the occurrences replaced. Call inside Journal::run.
 int replace_hits(Edit& e, const std::vector<Hit>& hits, const std::string& q,
                  const std::string& with, const FindOptions& o);
 

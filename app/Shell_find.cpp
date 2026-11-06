@@ -1,13 +1,14 @@
 // Shell_find.cpp -- find and replace across the book (s27, milestone 15).
 //
 // A bar over the panes (Ctrl+F; Esc closes): Find, Replace with, Match case,
-// Whole words, Grep (s30: the query a grep -E pattern), Previous / Next, Replace / Replace All, and "3 of 27". A match is
+// Whole words, Grep (s30: the query a grep -E pattern on each line), Previous / Next, Replace / Replace All, and "3 of 27". A match is
 // shown as the current word in both panes, the way F4 shows a word to check;
 // focus stays in the bar, so Enter walks on. Replace All is one step.
 #include "Shell.hpp"
 
 #include <gtkmm/eventcontrollerkey.h>
 
+#include <algorithm>
 #include <tuple>
 
 namespace optik {
@@ -64,8 +65,8 @@ void Shell::build_find() {
     m_find_q.signal_changed().connect([this] { find_count(); refresh_actions(); });
     m_find_case.signal_toggled().connect([this] { find_count(); });
     m_find_whole.signal_toggled().connect([this] { find_count(); });
-    m_find_grep.set_tooltip_text("Find a grep -E pattern in each word: . [a-z] * + ? {2} | ( ) ^ $ \\< \\>.\n"
-                                 "Replace with \\1..\\9 for a group, & for the whole match (as sed)");
+    m_find_grep.set_tooltip_text("Find a grep -E pattern in each line: ^ its start, $ its end, and . [a-z] * + ? {2} | ( ) \\< \\>;\n"
+                                 "a pattern may run across words. Replace with \\1..\\9 for a group, & for the whole match (as sed)");
     m_find_grep.signal_toggled().connect([this] { find_count(); refresh_actions(); });
 
     // Shift+Enter in Find goes back.
@@ -160,8 +161,16 @@ void Shell::find_replace_one() {
     if (q.empty()) return;
     const core::Page* p = current();
     const ocr::Word* w = p && m_word.valid() ? word_at(*p, m_word) : nullptr;
-    if (w && !core::find_in(w->text, q, find_options()).empty()) {
-        const core::Hit h{m_page_id, m_word.area, m_word.para, m_word.line, m_word.word};
+    const core::Hit h{m_page_id, m_word.area, m_word.para, m_word.line, m_word.word};
+    // A plain query is in the word; a grep pattern begins in it on its line (s30).
+    bool here = false;
+    if (w && find_options().grep) {
+        const auto hits = core::find_all(m_book, q, find_options());
+        here = std::find(hits.begin(), hits.end(), h) != hits.end();
+    } else {
+        here = w && !core::find_in(w->text, q, find_options()).empty();
+    }
+    if (here) {
         const std::string with = m_find_with.get_text();
         const auto o = find_options();
         step("Replace “" + q + "”", [&](core::Edit& e) { core::replace_hits(e, {h}, q, with, o); });
