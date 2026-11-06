@@ -10,8 +10,9 @@ namespace optik::core {
 namespace {
 
 bool starts_lower(const std::string& s) {
-    if (s.empty()) return false;
-    const unsigned char c = static_cast<unsigned char>(s[0]);
+    const std::size_t i = !s.empty() && s[0] == kFmtOn ? 2 : 0;
+    if (s.size() <= i) return false;
+    const unsigned char c = static_cast<unsigned char>(s[i]);
     return c >= 'a' && c <= 'z';
 }
 
@@ -27,7 +28,7 @@ bool ends_sentence(const std::string& s) {
     std::size_t i = s.size();
     for (bool again = true; again && i > 0;) {
         again = false;
-        for (const char* t : {"\xE2\x80\x9D", "\xE2\x80\x99", "\"", "'", ")", "]", " "}) {
+        for (const char* t : {"\xE2\x80\x9D", "\xE2\x80\x99", "\"", "'", ")", "]", " ", "\x02"}) {
             if (ends_with(s, i, t)) { i -= std::char_traits<char>::length(t); again = true; break; }
         }
     }
@@ -51,17 +52,77 @@ std::string xml_escape(const std::string& s) {
     return o;
 }
 
-// '\n' inside a block is a line break inside its paragraph.
+// One ODT character style per format bit, nested in bit order (s28).
+const char* fmt_style(unsigned bit) {
+    switch (bit) {
+        case ocr::kItalic:      return "Emphasis";
+        case ocr::kBold:        return "Strong_20_Emphasis";
+        case ocr::kUnderline:   return "Underline";
+        case ocr::kSmallCaps:   return "Small_20_Caps";
+        case ocr::kSuperscript: return "Superscript";
+    }
+    return "Emphasis";
+}
+
+// '\n' inside a block is a line break inside its paragraph; a format run is
+// its character styles, one span each (s27, s28).
 std::string with_breaks(const std::string& s) {
     std::string o;
-    for (char c : s) {
+    int open = 0;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
         if (c == '\n') o += "<text:line-break/>";
-        else o += c;
+        else if (c == kFmtOn && i + 1 < s.size()) {
+            const unsigned mask = unsigned(static_cast<unsigned char>(s[++i]) - '@') & ocr::kFmtAll;
+            for (unsigned bit = 1; bit <= ocr::kSuperscript; bit <<= 1)
+                if (mask & bit) { o += "<text:span text:style-name=\""; o += fmt_style(bit); o += "\">"; ++open; }
+        } else if (c == kFmtOff) {
+            for (; open > 0; --open) o += "</text:span>";
+        } else o += c;
     }
+    for (; open > 0; --open) o += "</text:span>";
     return o;
 }
 
+// Runs of the same format that meet become one: "a\x02 \x01Mb" -> "a b" when
+// the run before was M too; "a\x02\x01Mb" -> "ab".
+void fuse(std::string& s) {
+    std::string o;
+    o.reserve(s.size());
+    char mask = 0;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (c == kFmtOn && i + 1 < s.size()) { mask = s[i + 1]; o += c; o += s[++i]; continue; }
+        if (c == kFmtOff) {
+            std::size_t j = i + 1;
+            const bool space = j < s.size() && s[j] == ' ';
+            if (space) ++j;
+            if (j + 1 < s.size() && s[j] == kFmtOn && s[j + 1] == mask) {
+                if (space) o += ' ';
+                i = j + 1;   // skip the close, the space (kept above) and the reopen
+                continue;
+            }
+        }
+        o += c;
+    }
+    s = std::move(o);
+}
+
 }  // namespace
+
+std::string fmt_open(unsigned mask) {
+    return std::string(1, kFmtOn) + char('@' + (mask & ocr::kFmtAll));
+}
+
+std::string plain(const std::string& marked) {
+    std::string o;
+    o.reserve(marked.size());
+    for (std::size_t i = 0; i < marked.size(); ++i) {
+        if (marked[i] == kFmtOn) { ++i; continue; }
+        if (marked[i] != kFmtOff) o += marked[i];
+    }
+    return o;
+}
 
 // A hyphen at a line end is mended only when the next line starts in lower case:
 // "exam-" / "ple" is one word; "1914-" / "1918" and "well-" / "Known" are left.
@@ -71,14 +132,18 @@ std::string join_lines(const std::vector<std::string>& lines, bool dehyphenate) 
     for (const auto& raw : lines) {
         if (raw.empty()) continue;
         if (out.empty()) { out = raw; continue; }
-        const bool hy = out.size() > 1 && out.back() == '-' && out[out.size() - 2] != '-';
+        // A formatted word at the line end closes its run after the hyphen.
+        const bool shut = out.back() == kFmtOff;
+        const std::size_t e = out.size() - (shut ? 1 : 0);
+        const bool hy = e > 1 && out[e - 1] == '-' && out[e - 2] != '-';
         if (dehyphenate && hy && starts_lower(raw)) {
-            out.pop_back();
+            out.erase(e - 1, 1);
             out += raw;
         } else {
             out += ' ';
             out += raw;
         }
+        fuse(out);
     }
     return out;
 }
@@ -100,8 +165,10 @@ std::vector<Block> flow(const Book& book) {
                     for (const auto& w : l.words) {
                         if (w.text.empty()) continue;
                         if (!s.empty()) s += ' ';
-                        s += w.text;
+                        if (const unsigned f = ocr::fmt_of(w)) { s += fmt_open(f); s += w.text; s += kFmtOff; }
+                        else s += w.text;
                     }
+                    fuse(s);
                     lines.push_back(std::move(s));
                 }
                 const bool heading = area.kind == ocr::Kind::Heading;
@@ -145,7 +212,7 @@ bool write_text(const std::vector<Block>& blocks, const std::string& path, std::
     if (!f) { if (why) *why = "could not write " + path; return false; }
     for (std::size_t i = 0; i < blocks.size(); ++i) {
         if (i) f << "\n\n";
-        f << blocks[i].text;
+        f << plain(blocks[i].text);
     }
     f << '\n';
     return bool(f);
@@ -175,7 +242,8 @@ bool write_odt(const std::vector<Block>& blocks, const std::string& title,
         " xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\""
         " office:version=\"1.3\"";
 
-    // Two handles for Writer, nothing more: the body and Heading 1. Writer's own
+    // Handles for Writer, nothing more: the body, Heading 1, and (s27) the
+    // Emphasis character style italic words are set in. Writer's own
     // default styles carry the rest.
     const std::string styles =
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -187,6 +255,21 @@ bool write_odt(const std::vector<Block>& blocks, const std::string& title,
         "  </style:style>\n"
         "  <style:style style:name=\"Heading_20_1\" style:display-name=\"Heading 1\" style:family=\"paragraph\" style:parent-style-name=\"Standard\" style:next-style-name=\"Text_20_body\" style:default-outline-level=\"1\" style:class=\"text\">\n"
         "   <style:text-properties fo:font-size=\"130%\" fo:font-weight=\"bold\"/>\n"
+        "  </style:style>\n"
+        "  <style:style style:name=\"Emphasis\" style:family=\"text\">\n"
+        "   <style:text-properties fo:font-style=\"italic\"/>\n"
+        "  </style:style>\n"
+        "  <style:style style:name=\"Strong_20_Emphasis\" style:display-name=\"Strong Emphasis\" style:family=\"text\">\n"
+        "   <style:text-properties fo:font-weight=\"bold\"/>\n"
+        "  </style:style>\n"
+        "  <style:style style:name=\"Underline\" style:family=\"text\">\n"
+        "   <style:text-properties style:text-underline-style=\"solid\" style:text-underline-width=\"auto\" style:text-underline-color=\"font-color\"/>\n"
+        "  </style:style>\n"
+        "  <style:style style:name=\"Small_20_Caps\" style:display-name=\"Small Caps\" style:family=\"text\">\n"
+        "   <style:text-properties fo:font-variant=\"small-caps\"/>\n"
+        "  </style:style>\n"
+        "  <style:style style:name=\"Superscript\" style:family=\"text\">\n"
+        "   <style:text-properties style:text-position=\"super 58%\"/>\n"
         "  </style:style>\n"
         " </office:styles>\n"
         "</office:document-styles>\n";

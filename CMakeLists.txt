@@ -33,7 +33,7 @@ if(OPTIK_SANITIZE)
 endif()
 
 # The build stamp the About line and the selftest print. Bumped per session.
-set(OPTIK_BUILD "s26")
+set(OPTIK_BUILD "s28")
 set(OPTIK_APP_ID "io.github.example.Optik")
 
 find_package(PkgConfig REQUIRED)
@@ -41,6 +41,7 @@ find_package(Threads REQUIRED)
 pkg_check_modules(LEPT REQUIRED IMPORTED_TARGET lept)
 pkg_check_modules(TESS REQUIRED IMPORTED_TARGET tesseract)
 pkg_check_modules(ZIP  REQUIRED IMPORTED_TARGET libzip)
+pkg_check_modules(HUNSPELL REQUIRED IMPORTED_TARGET hunspell)   # s27: the spelling pass
 
 # -- libs/scan ------------------------------------------------------------------
 add_library(optik_scan STATIC
@@ -54,7 +55,7 @@ add_library(optik_image STATIC libs/scan/src/Image.cpp)
 target_link_libraries(optik_image PUBLIC optik_scan PkgConfig::LEPT)
 
 # -- libs/ocr -------------------------------------------------------------------
-add_library(optik_ocr STATIC libs/ocr/Ocr.cpp)
+add_library(optik_ocr STATIC libs/ocr/Ocr.cpp libs/ocr/Slant.cpp)
 target_include_directories(optik_ocr PUBLIC libs)
 target_link_libraries(optik_ocr PUBLIC PkgConfig::TESS PkgConfig::LEPT)
 
@@ -70,10 +71,13 @@ add_library(optik_core STATIC
     core/PageOps.cpp
     core/Picture.cpp
     core/Export.cpp
+    core/Spell.cpp
+    core/Find.cpp
+    core/Format.cpp
 )
 target_include_directories(optik_core PUBLIC . libs PRIVATE third_party)
 target_link_libraries(optik_core PUBLIC optik_image optik_ocr Threads::Threads
-                                 PRIVATE PkgConfig::ZIP)
+                                 PRIVATE PkgConfig::ZIP PkgConfig::HUNSPELL)
 target_compile_definitions(optik_core PUBLIC OPTIK_BUILD="${OPTIK_BUILD}")
 
 # -- selftest -------------------------------------------------------------------
@@ -85,9 +89,12 @@ add_executable(optik_selftest
     tests/selftest_recent.cpp
     tests/selftest_audit.cpp
     tests/selftest_pageops.cpp
+    tests/selftest_italic.cpp
+    tests/selftest_find.cpp
+    tests/selftest_format.cpp
 )
 target_include_directories(optik_selftest PRIVATE tests)
-target_link_libraries(optik_selftest PRIVATE optik_core)
+target_link_libraries(optik_selftest PRIVATE optik_core PkgConfig::ZIP)   # s27: reads an ODT back
 target_compile_definitions(optik_selftest PRIVATE
     OPTIK_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 

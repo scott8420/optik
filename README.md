@@ -14,14 +14,22 @@ proofs what is uncertain, and the book exports to ODT for LibreOffice Writer.
   find it in the text. Drag an area's edge to resize it (it is read again);
   **Draw Area** to add one; **Area** menu or Del to retype or remove it.
 - **The text** -- line for line as printed, editable; F4 goes to the next word
-  to check, Ctrl+Enter accepts it.
+  to check, Ctrl+Enter accepts it. Italic is measured from the pixels and shown
+  in italic (Ctrl+I sets or clears it); words the dictionary does not know get
+  a squiggle -- Ctrl+Shift+Enter adds one to the book's own words.
+- **Format** -- the bar over the text: Bold, Italic, Underline, Small Caps,
+  Superscript (Ctrl+B / I / U, Ctrl+Shift+K / P) on the selected words; Heading
+  (Ctrl+Shift+H) for the area. The arrows turn the page outside the text.
+- **Find and Replace** -- Ctrl+F: across the book, Enter / Shift+Enter to walk
+  the matches, Replace All as one undoable step.
 - **The pages** -- move a page (Alt+Up / Alt+Down), turn it a quarter
   (Ctrl+] / Ctrl+[), delete it, or **Re-cut the Scan…**: one page or two, the
   cut dragged to the gutter. A turned or re-cut page is read again.
 - **Undo** -- every change, Ctrl+Z / Ctrl+Shift+Z, from anywhere.
 - **Export** -- ODT (Text body + Heading 1, for Writer to restyle) or plain
   text. Running heads and folios left out; paragraphs broken by the page turn
-  joined; line-end hyphens mended. Each is a Book setting.
+  joined; line-end hyphens mended; formats as Writer's character styles. Each is
+  a Book setting.
 
 ## Build
 

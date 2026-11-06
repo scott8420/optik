@@ -51,4 +51,13 @@ std::string mend_quote_word(const std::string& text, bool* doubt = nullptr);
 //   confident the engine was: that is where a confident misread hides.
 void mark_small_caps(std::vector<ocr::Area>& areas);
 
+// Italic (s27). The engine measures it (ocr/Slant.hpp) on every read; this is
+// the book's say over what that means. On (Settings::mark_italic): an italic
+// word is doubted -- the measure is a lean, and a lean can be a swash capital or
+// a smudge, so each one wants a look until checked; export sets it as emphasis.
+// Off: the measure is dropped (no word italic) and nothing is doubted for it.
+// A word the author checked or edited is not touched either way.
+void mark_italic(std::vector<ocr::Para>& paras, bool on);
+void mark_italic(std::vector<ocr::Area>& areas, bool on);
+
 }  // namespace optik::core

@@ -35,6 +35,21 @@ TextPanel::TextPanel()
     m_tag_empty = m_buf->create_tag("empty");
     m_tag_empty->property_foreground_rgba() = Gdk::RGBA(0.6, 0.6, 0.6, 1.0);
     m_tag_empty->property_editable() = false;
+    // s27: italic words in italic; words the dictionary does not know get the
+    // spelling squiggle on top of the to-check colour.
+    m_tag_italic = m_buf->create_tag("italic");
+    m_tag_italic->property_style() = Pango::Style::ITALIC;
+    m_tag_bold = m_buf->create_tag("bold");
+    m_tag_bold->property_weight() = Pango::Weight::BOLD;
+    m_tag_underline = m_buf->create_tag("underline");
+    m_tag_underline->property_underline() = Pango::Underline::SINGLE;
+    m_tag_smallcaps = m_buf->create_tag("smallcaps");
+    m_tag_smallcaps->property_variant() = Pango::Variant::SMALL_CAPS;
+    m_tag_super = m_buf->create_tag("super");
+    m_tag_super->property_rise() = 5 * PANGO_SCALE;
+    m_tag_super->property_scale() = 0.7;
+    m_tag_unknown = m_buf->create_tag("unknown");
+    m_tag_unknown->property_underline() = Pango::Underline::ERROR;
 
     m_buf->signal_changed().connect(sigc::mem_fun(*this, &TextPanel::on_changed));
     m_buf->signal_mark_set().connect(sigc::mem_fun(*this, &TextPanel::on_mark_set));
@@ -100,6 +115,17 @@ void TextPanel::show(const core::Book* book, const core::Page* page) {
                 const auto kind = page->areas[std::size_t(s.ref.area)].kind;
                 if (w && book && ocr::kind_is_text(kind) && book->uncertain(*w))
                     m_buf->apply_tag(m_tag_uncertain, m_buf->get_iter_at_mark(s.a),
+                                     m_buf->get_iter_at_mark(s.b));
+                if (w) {
+                    const auto a = m_buf->get_iter_at_mark(s.a), b = m_buf->get_iter_at_mark(s.b);
+                    if (w->italic)      m_buf->apply_tag(m_tag_italic, a, b);
+                    if (w->bold)        m_buf->apply_tag(m_tag_bold, a, b);
+                    if (w->underline)   m_buf->apply_tag(m_tag_underline, a, b);
+                    if (w->small_caps)  m_buf->apply_tag(m_tag_smallcaps, a, b);
+                    if (w->superscript) m_buf->apply_tag(m_tag_super, a, b);
+                }
+                if (w && book && ocr::kind_is_text(kind) && w->unknown && book->uncertain(*w))
+                    m_buf->apply_tag(m_tag_unknown, m_buf->get_iter_at_mark(s.a),
                                      m_buf->get_iter_at_mark(s.b));
             }
         }
@@ -175,6 +201,36 @@ bool TextPanel::commit_now() {
     if (edits.empty()) return false;
     signal_edited.emit(m_page_id, std::move(edits));
     return true;
+}
+
+}  // namespace optik
+
+namespace optik {
+
+std::vector<WordRef> TextPanel::selected_words() const {
+    std::vector<WordRef> out;
+    Gtk::TextBuffer::iterator a, b;
+    if (!m_buf->get_selection_bounds(a, b)) return out;
+    const int lo = a.get_offset(), hi = b.get_offset();
+    for (const auto& s : m_slots) {
+        const int sa = m_buf->get_iter_at_mark(s.a).get_offset();
+        const int sb = m_buf->get_iter_at_mark(s.b).get_offset();
+        if (sb > lo && sa < hi) out.push_back(s.ref);   // the selection touches it
+    }
+    return out;
+}
+
+void TextPanel::select_words(const WordRef& first, const WordRef& last) {
+    Glib::RefPtr<Gtk::TextMark> a, b;
+    for (const auto& s : m_slots) {
+        if (s.ref == first) a = s.a;
+        if (s.ref == last)  b = s.b;
+    }
+    if (!a || !b) return;
+    const bool was = m_building;
+    m_building = true;   // our own selection is not the author's cursor move
+    m_buf->select_range(m_buf->get_iter_at_mark(a), m_buf->get_iter_at_mark(b));
+    m_building = was;
 }
 
 }  // namespace optik

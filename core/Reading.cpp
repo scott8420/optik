@@ -1,8 +1,33 @@
 #include "Reading.hpp"
 
 #include "Passes.hpp"
+#include "Spell.hpp"
+
+#include <memory>
 
 namespace optik::core {
+
+namespace {
+
+// One Hunspell per worker thread, made on first use (s27). Null when the book's
+// language has no dictionary installed: then there is no spelling pass.
+Speller* speller_for(const std::string& language) {
+    thread_local std::unique_ptr<Speller> sp;
+    if (sp && sp->language() == language) return sp->ready() ? sp.get() : nullptr;
+    sp = std::make_unique<Speller>();
+    sp->open(language);
+    return sp->ready() ? sp.get() : nullptr;
+}
+
+template <class T>
+void spell(T& what, const ReadRequest& r) {
+    if (!r.settings.check_spelling) return;
+    Speller* sp = speller_for(r.settings.language);
+    if (!sp) return;
+    mark_spelling(what, [sp](const std::string& w) { return sp->known(w); }, r.book_words);
+}
+
+}  // namespace
 
 ReadRequest request_for(const Book& book, const Page& page) {
     ReadRequest r;
@@ -11,6 +36,7 @@ ReadRequest request_for(const Book& book, const Page& page) {
     r.crop      = page.crop;
     r.turns     = page.turns;
     r.settings  = book.meta().settings;
+    r.book_words = book.meta().words;
     return r;
 }
 
@@ -43,6 +69,10 @@ Reading read(ocr::Engine& engine, const ReadRequest& r) {
             mend_quotes(one);
             out.paras = std::move(one[0].paras);
         }
+        if (out.ok) {
+            mark_italic(out.paras, r.settings.mark_italic);
+            spell(out.paras, r);
+        }
         return out;
     }
     out.ok = engine.read_page(r.scan_path, r.crop, r.turns, out.areas, &out.why);
@@ -53,6 +83,8 @@ Reading read(ocr::Engine& engine, const ReadRequest& r) {
     if (st.mark_headings)      mark_headings(out.areas);
     if (st.mend_quotes)        mend_quotes(out.areas);
     if (st.small_caps)         mark_small_caps(out.areas);
+    mark_italic(out.areas, st.mark_italic);   // on: doubted; off: the measure dropped
+    spell(out.areas, r);                      // Settings::check_spelling, if a dictionary
     return out;
 }
 

@@ -1,6 +1,8 @@
 // Shell.cpp -- zones: construction, actions, keys, refresh, status.
 #include "Shell.hpp"
 
+#include "core/Spell.hpp"
+
 #include "App.hpp"
 #include "Log.hpp"
 #include "RecutWindow.hpp"
@@ -102,6 +104,12 @@ void Shell::build_header() {
     auto proof = Gio::Menu::create();
     proof->append("Next Word to Check", "win.next");
     proof->append("Accept Word", "win.accept");
+    proof->append("Add to Book's Words", "win.add-word");
+    auto finding = Gio::Menu::create();
+    finding->append("Find and Replace…", "win.find");
+    finding->append("Find Next", "win.find-next");
+    finding->append("Find Previous", "win.find-prev");
+    proof->append_section(finding);
     auto paging = Gio::Menu::create();
     paging->append("Next Page", "win.page-next");
     paging->append("Previous Page", "win.page-prev");
@@ -153,6 +161,16 @@ void Shell::build_header() {
     top_subjects->append_submenu("File", file);
     top_subjects->append_submenu("Read", read);
     top_subjects->append_submenu("Proof", proof);
+    auto formats = Gio::Menu::create();   // s28: the format bar's verbs, with their keys
+    formats->append("Bold", "win.fmt-bold");
+    formats->append("Italic", "win.italic");
+    formats->append("Underline", "win.fmt-underline");
+    formats->append("Small Caps", "win.fmt-smallcaps");
+    formats->append("Superscript", "win.fmt-super");
+    auto fmt_area = Gio::Menu::create();
+    fmt_area->append("Heading (the area)", "win.fmt-heading");
+    formats->append_section(fmt_area);
+    top_subjects->append_submenu("Format", formats);
     top_subjects->append_submenu("Page", page);
     top_subjects->append_submenu("Area", area);
     top_subjects->append_submenu("View", view);
@@ -176,8 +194,12 @@ void Shell::build_header() {
 // -- zone: panes and status --------------------------------------------------------
 
 void Shell::build_body() {
+    build_format_bar();
+    m_text.set_vexpand(true);
+    m_textcol.append(m_fmtbar);
+    m_textcol.append(m_text);
     m_inner.set_start_child(m_view);
-    m_inner.set_end_child(m_text);
+    m_inner.set_end_child(m_textcol);
     m_inner.set_resize_start_child(true);
     m_inner.set_shrink_start_child(false);
     m_inner.set_position(760);
@@ -203,6 +225,8 @@ void Shell::build_body() {
     m_status.append(m_progress);
     m_status.append(m_cancel);
 
+    build_find();
+    m_root.append(m_find);
     m_root.append(m_outer);
     m_root.append(m_status);
     set_child(m_root);
@@ -272,6 +296,16 @@ void Shell::build_actions(App& app) {
     });
     add("next", [this] { next_to_check(); });
     add("accept", [this] { accept_word(); });
+    add("add-word", [this] { add_book_word(); });
+    add("italic", [this] { toggle_italic(); });
+    add("fmt-bold",      [this] { format_words(ocr::kBold); });
+    add("fmt-underline", [this] { format_words(ocr::kUnderline); });
+    add("fmt-smallcaps", [this] { format_words(ocr::kSmallCaps); });
+    add("fmt-super",     [this] { format_words(ocr::kSuperscript); });
+    add("fmt-heading",   [this] { format_heading(); });
+    add("find", [this] { find_show(true); });
+    add("find-next", [this] { find_step(+1); });
+    add("find-prev", [this] { find_step(-1); });
     add("page-next", [this] { go_to(m_book.index_of(m_page_id) + 1); });
     add("page-prev", [this] { go_to(m_book.index_of(m_page_id) - 1); });
     add("cancel", [this] { on_cancel(); });
@@ -314,6 +348,16 @@ void Shell::build_actions(App& app) {
     app.set_accels_for_action("win.redo", {"<Control><Shift>z", "<Control>y"});
     app.set_accels_for_action("win.next", {"F4"});
     app.set_accels_for_action("win.accept", {"<Control>Return"});
+    app.set_accels_for_action("win.add-word", {"<Control><Shift>Return"});
+    app.set_accels_for_action("win.italic", {"<Control>i"});
+    app.set_accels_for_action("win.fmt-bold", {"<Control>b"});
+    app.set_accels_for_action("win.fmt-underline", {"<Control>u"});
+    app.set_accels_for_action("win.fmt-smallcaps", {"<Control><Shift>k"});
+    app.set_accels_for_action("win.fmt-super", {"<Control><Shift>p"});
+    app.set_accels_for_action("win.fmt-heading", {"<Control><Shift>h"});
+    app.set_accels_for_action("win.find", {"<Control>f"});
+    app.set_accels_for_action("win.find-next", {"<Control>g", "F3"});
+    app.set_accels_for_action("win.find-prev", {"<Control><Shift>g", "<Shift>F3"});
     app.set_accels_for_action("win.page-next", {"<Control>Page_Down"});
     app.set_accels_for_action("win.page-prev", {"<Control>Page_Up"});
     app.set_accels_for_action("win.export", {"<Control>e"});
@@ -336,7 +380,29 @@ bool Shell::on_key(guint key, guint, Gdk::ModifierType mods) {
     const bool shift = (mods & Gdk::ModifierType::SHIFT_MASK) == Gdk::ModifierType::SHIFT_MASK;
     if (ctrl && (key == GDK_KEY_z || key == GDK_KEY_Z)) { shift ? redo() : undo(); return true; }
     if (ctrl && (key == GDK_KEY_y || key == GDK_KEY_Y)) { redo(); return true; }
-    if (ctrl && (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter)) { accept_word(); return true; }
+    if (ctrl && (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter)) {
+        shift ? add_book_word() : accept_word();
+        return true;
+    }
+    // s28: the format keys, caught here so the text pane cannot take them.
+    if (ctrl && !shift && (key == GDK_KEY_i || key == GDK_KEY_I)) { toggle_italic(); return true; }
+    if (ctrl && !shift && (key == GDK_KEY_b || key == GDK_KEY_B)) { format_words(ocr::kBold); return true; }
+    if (ctrl && !shift && (key == GDK_KEY_u || key == GDK_KEY_U)) { format_words(ocr::kUnderline); return true; }
+    if (ctrl && shift && (key == GDK_KEY_k || key == GDK_KEY_K)) { format_words(ocr::kSmallCaps); return true; }
+    if (ctrl && shift && (key == GDK_KEY_p || key == GDK_KEY_P)) { format_words(ocr::kSuperscript); return true; }
+    if (ctrl && shift && (key == GDK_KEY_h || key == GDK_KEY_H)) { format_heading(); return true; }
+    // s28 (Scott): the arrows turn the pages -- unless the keyboard is in the
+    // text or a field, where they move the cursor.
+    const bool bare = !ctrl && !shift &&
+        (mods & (Gdk::ModifierType::ALT_MASK | Gdk::ModifierType::SUPER_MASK)) == Gdk::ModifierType{};
+    if (bare && m_has_book && !keyboard_in_text()) {
+        if (key == GDK_KEY_Right || key == GDK_KEY_Down || key == GDK_KEY_Page_Down) {
+            go_to(m_book.index_of(m_page_id) + 1); return true;
+        }
+        if (key == GDK_KEY_Left || key == GDK_KEY_Up || key == GDK_KEY_Page_Up) {
+            go_to(m_book.index_of(m_page_id) - 1); return true;
+        }
+    }
     if (key == GDK_KEY_F4) { next_to_check(); return true; }
     if (ctrl && key == GDK_KEY_Page_Down) { go_to(m_book.index_of(m_page_id) + 1); return true; }
     if (ctrl && key == GDK_KEY_Page_Up)   { go_to(m_book.index_of(m_page_id) - 1); return true; }
@@ -346,6 +412,7 @@ bool Shell::on_key(guint key, guint, Gdk::ModifierType mods) {
             return true;
         }
         if (m_batch_total) { on_cancel(); return true; }
+        if (m_find.get_reveal_child()) { find_show(false); return true; }
     }
     // Delete removes the selected AREA only when the keyboard is not in the text.
     if (key == GDK_KEY_Delete && m_area >= 0) {
@@ -506,6 +573,16 @@ void Shell::refresh_actions() {
     en("save-as", m_has_book);
     en("next", m_has_book);
     en("accept", p && m_word.valid() && word_at(*p, m_word));
+    en("add-word", p && m_word.valid() && word_at(*p, m_word) &&
+                   !core::spell_parts(word_at(*p, m_word)->text).empty());
+    en("italic", p && m_word.valid() && word_at(*p, m_word));
+    for (const char* f : {"fmt-bold", "fmt-underline", "fmt-smallcaps", "fmt-super"})
+        en(f, p && m_word.valid() && word_at(*p, m_word));
+    en("fmt-heading", area);
+    sync_format_bar();
+    en("find", m_has_book);
+    en("find-next", m_has_book && !m_find_q.get_text().empty());
+    en("find-prev", m_has_book && !m_find_q.get_text().empty());
     en("area-kind", area);
     en("area-read", area);
     en("area-delete", area);

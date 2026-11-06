@@ -24,6 +24,7 @@ struct ReadRequest {
     Rect        crop;
     int         turns = 0;      // s26
     Settings    settings;
+    std::vector<std::string> book_words;   // s27: the spelling pass's own words
     // Set for an area re-read: which area, and the rectangle to read it from.
     int         area = -1;
     Rect        area_box;

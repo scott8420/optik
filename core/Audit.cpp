@@ -34,6 +34,11 @@ std::string rs(const Rect& r) {
            std::to_string(r.x1) + "," + std::to_string(r.y1) + "]";
 }
 
+std::string lower(std::string s) {
+    for (char& c : s) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+    return s;
+}
+
 }  // namespace
 
 std::vector<std::string> audit(const Book& book) {
@@ -83,6 +88,14 @@ std::vector<std::string> audit(const Book& book) {
                     }
         }
     }
+    // s27: the book's own words are sorted, one each (case aside), none empty.
+    const auto& bw = book.meta().words;
+    for (std::size_t i = 0; i < bw.size(); ++i) {
+        if (bw[i].empty()) say("an empty book word");
+        if (i && !(bw[i - 1] < bw[i])) say("book words not sorted: '" + bw[i - 1] + "' then '" + bw[i] + "'");
+        for (std::size_t j = 0; j < i; ++j)
+            if (lower(bw[j]) == lower(bw[i])) say("book word twice: '" + bw[i] + "'");
+    }
     if (book.meta().settings.uncertain_below < 0 || book.meta().settings.uncertain_below > 100)
         say("uncertain_below out of 0..100");
     return bad;
@@ -93,6 +106,7 @@ namespace {
 bool near_words(const ocr::Word& a, const ocr::Word& b) {
     return a.text == b.text && a.box == b.box && std::fabs(a.conf - b.conf) <= 0.06f &&
            a.checked == b.checked && a.edited == b.edited && a.doubt == b.doubt &&
+           a.italic == b.italic && a.unknown == b.unknown && ocr::fmt_of(a) == ocr::fmt_of(b) &&
            a.original == b.original;
 }
 

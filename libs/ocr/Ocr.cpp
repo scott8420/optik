@@ -1,4 +1,5 @@
 #include "Ocr.hpp"
+#include "Slant.hpp"
 
 #include <leptonica/allheaders.h>
 #include <tesseract/baseapi.h>
@@ -6,6 +7,7 @@
 #include <tesseract/resultiterator.h>
 
 #include <memory>
+#include <vector>
 
 namespace optik::ocr {
 
@@ -38,6 +40,19 @@ bool kind_from(const std::string& s, Kind& out) {
 }
 
 bool kind_is_text(Kind k) { return k == Kind::Text || k == Kind::Heading; }
+
+unsigned fmt_of(const Word& w) {
+    return (w.italic ? kItalic : 0u) | (w.bold ? kBold : 0u) | (w.underline ? kUnderline : 0u) |
+           (w.small_caps ? kSmallCaps : 0u) | (w.superscript ? kSuperscript : 0u);
+}
+
+void set_fmt(Word& w, unsigned bits, bool on) {
+    if (bits & kItalic)      w.italic = on;
+    if (bits & kBold)        w.bold = on;
+    if (bits & kUnderline)   w.underline = on;
+    if (bits & kSmallCaps)   w.small_caps = on;
+    if (bits & kSuperscript) w.superscript = on;
+}
 
 std::string para_text(const Para& p) {
     std::string s;
@@ -80,6 +95,28 @@ PixPtr load_crop(const std::string& path, const Rect& crop, int turns, std::stri
     PixPtr turned(pixRotateOrth(part.get(), turns));
     if (!turned) { if (why) *why = "could not turn the page"; return nullptr; }
     return turned;
+}
+
+// The page as 8-bit grey bytes, for the italic measure (Slant.hpp): the same
+// pixels the engine read, so every word box lands on its own ink.
+struct GreyPage {
+    std::vector<unsigned char> bytes;
+    Grey view;
+};
+bool grey_of(Pix* pix, GreyPage& out) {
+    PixPtr g8(pixConvertTo8(pix, 0));
+    if (!g8 || pixGetDepth(g8.get()) != 8) return false;
+    const int w = int(pixGetWidth(g8.get())), h = int(pixGetHeight(g8.get()));
+    const int wpl = pixGetWpl(g8.get());
+    l_uint32* data = pixGetData(g8.get());
+    out.bytes.resize(std::size_t(w) * std::size_t(h));
+    for (int y = 0; y < h; ++y) {
+        l_uint32* line = data + std::size_t(y) * std::size_t(wpl);
+        unsigned char* row = out.bytes.data() + std::size_t(y) * std::size_t(w);
+        for (int x = 0; x < w; ++x) row[x] = static_cast<unsigned char>(GET_DATA_BYTE(line, x));
+    }
+    out.view = Grey{out.bytes.data(), w, h, w};
+    return true;
 }
 
 Kind kind_of(tesseract::PolyBlockType t) {
@@ -219,6 +256,10 @@ bool Engine::read_page(const std::string& path, const Rect& crop, int turns,
     for (Area& a : out)
         if (!kind_is_text(a.kind) || !a.paras.empty()) kept.push_back(std::move(a));
     out = std::move(kept);
+
+    // Italic, from the pixels (s27): the engine does not say.
+    GreyPage g;
+    if (grey_of(pix.get(), g)) measure_italic(g.view, out);
     return true;
 }
 
@@ -242,6 +283,9 @@ bool Engine::read_area(const std::string& path, const Rect& crop, int turns, con
     std::unique_ptr<tesseract::ResultIterator> ri(api.GetIterator());
     walk_words(ri.get(), &out, [&](const Rect&) { return &out; });
     api.Clear();
+
+    GreyPage g;
+    if (grey_of(pix.get(), g)) measure_italic(g.view, out);
     return true;
 }
 

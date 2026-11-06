@@ -446,4 +446,22 @@ void mark_small_caps(std::vector<Area>& areas) {
     }
 }
 
+// -- italic (s27) ---------------------------------------------------------------
+
+void mark_italic(std::vector<ocr::Para>& paras, bool on) {
+    for (auto& p : paras)
+        for (auto& l : p.lines)
+            for (auto& w : l.words) {
+                if (w.checked || w.edited) continue;
+                if (!on) { w.italic = false; continue; }
+                if (w.italic) w.doubt = true;
+            }
+}
+
+void mark_italic(std::vector<ocr::Area>& areas, bool on) {
+    for (auto& a : areas)
+        if (ocr::kind_is_text(a.kind)) mark_italic(a.paras, on);
+        else if (!on) mark_italic(a.paras, false);
+}
+
 }  // namespace optik::core

@@ -18,6 +18,8 @@
 #include "PagesPanel.hpp"
 #include "PageView.hpp"
 #include "TextPanel.hpp"
+#include "core/Find.hpp"
+#include "core/Format.hpp"
 #include "core/Book.hpp"
 #include "core/Jobs.hpp"
 #include "core/Recent.hpp"
@@ -97,6 +99,24 @@ private:
     // -- proofing (Shell_verify.cpp)
     void next_to_check();                                    // proofing: F4
     void accept_word();                                      // proofing: Ctrl+Enter
+    void add_book_word();                                    // s27: Ctrl+Shift+Enter
+    void toggle_italic();                                    // s27: Ctrl+I (s28: format_words)
+
+    // -- the format bar (s28, Shell_format.cpp): over the text pane
+    void build_format_bar();
+    void format_words(unsigned bit);      // Ctrl+B / I / U, Ctrl+Shift+K / P
+    void format_heading();                // Ctrl+Shift+H: the area Heading <-> Text
+    void sync_format_bar();               // the buttons show the current word
+    bool keyboard_in_text();        // typing: arrows belong to the text
+
+    // -- find and replace (s27, Shell_find.cpp): a bar over the panes, Ctrl+F
+    void build_find();
+    void find_show(bool on);
+    void find_step(int dir);              // +1 next (Enter, Ctrl+G), -1 previous
+    void find_replace_one();
+    void find_replace_all();
+    void find_count();
+    core::FindOptions find_options() const;
     void on_text_edited(const std::string& page_id, const std::vector<WordEdit>& edits);
     void on_word(const WordRef& w, bool from_text);          // proofing: either pane
     void set_area_kind(ocr::Kind k);                         // areas
@@ -164,6 +184,17 @@ private:
     widgets::Label     m_status_msg{"status.message"};
     widgets::ProgressBar m_progress{"status.progress"};
     widgets::Button    m_cancel{"status.cancel"};
+    widgets::Box       m_textcol{"text.column", Gtk::Orientation::VERTICAL};
+    widgets::Box       m_fmtbar{"format", Gtk::Orientation::HORIZONTAL, 2};
+    std::vector<std::pair<unsigned, widgets::ToggleButton*>> m_fmt_buttons;
+    widgets::ToggleButton* m_fmt_heading = nullptr;
+    bool               m_fmt_syncing = false;
+    widgets::Revealer  m_find{"find"};
+    widgets::Entry     m_find_q{"find.query"};
+    widgets::Entry     m_find_with{"find.with"};
+    widgets::CheckButton m_find_case{"find.case", "Match case"};
+    widgets::CheckButton m_find_whole{"find.whole", "Whole words"};
+    widgets::Label     m_find_n{"find.count"};
     Gtk::Popover       m_settings_pop;
     std::function<void()> m_settings_sync;
     sigc::connection   m_msg_timer;

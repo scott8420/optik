@@ -2,6 +2,7 @@
 #include "Shell.hpp"
 
 #include "Log.hpp"
+#include "core/Spell.hpp"
 #include "core/Export.hpp"
 #include "model/Intake.hpp"
 
@@ -284,11 +285,14 @@ void Shell::build_settings_popover() {
     auto* heads2 = Gtk::make_managed<widgets::CheckButton>("settings.headings", "Mark headings (short, centred, space below) when reading");
     auto* quotes = Gtk::make_managed<widgets::CheckButton>("settings.quotes", "Mend quotes read as two marks (``Stop -> \u201CStop) when reading");
     auto* caps   = Gtk::make_managed<widgets::CheckButton>("settings.smallcaps", "Small caps: capital headings, check chapter openers when reading");
+    auto* ital  = Gtk::make_managed<widgets::CheckButton>("settings.italic", "Italic: measure the lean, check italic words when reading");
+    auto* spell = Gtk::make_managed<widgets::CheckButton>("settings.spell", "Spelling: check words the dictionary does not know when reading");
+    ital->set_tooltip_text("Takes effect on the next read of a page. Ctrl+I sets or clears italic on a word");
     heads2->set_tooltip_text("Takes effect on the next read of a page");
     quotes->set_tooltip_text("Takes effect on the next read of a page");
     caps->set_tooltip_text("Takes effect on the next read of a page");
 
-    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, thr_row, split, heads, heads2, quotes, caps, join, hyph})
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, thr_row, split, heads, heads2, quotes, caps, ital, spell, join, hyph})
         box->append(*w);
     m_settings_pop.set_child(*box);
     m_settings_pop.set_parent(m_title);   // ☰ -> Book Settings… points it at the title
@@ -307,6 +311,15 @@ void Shell::build_settings_popover() {
         heads2->set_active(s.mark_headings);
         quotes->set_active(s.mend_quotes);
         caps->set_active(s.small_caps);
+        ital->set_active(s.mark_italic);
+        spell->set_active(s.check_spelling);
+        // No dictionary for the book's language: say which package, keep the box.
+        const std::string dic = core::dictionary_for(s.language);
+        spell->set_tooltip_text(dic.empty()
+            ? "No spelling dictionary is installed for '" + s.language +
+              "' -- install hunspell-en-US (or your language's), then read again"
+            : "Takes effect on the next read of a page. Dictionary: " + dic +
+              ". Ctrl+Shift+Enter adds a word to the book's own words");
         *quiet = false;
     };
     (void)syncing;
@@ -354,6 +367,14 @@ void Shell::build_settings_popover() {
     caps->signal_toggled().connect([=] {
         const bool v = caps->get_active();
         change("Small caps", [v](core::Settings& s) { s.small_caps = v; });
+    });
+    ital->signal_toggled().connect([=] {
+        const bool v = ital->get_active();
+        change("Italic", [v](core::Settings& s) { s.mark_italic = v; });
+    });
+    spell->signal_toggled().connect([=] {
+        const bool v = spell->get_active();
+        change("Spelling", [v](core::Settings& s) { s.check_spelling = v; });
     });
 }
 

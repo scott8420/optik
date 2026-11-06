@@ -132,6 +132,13 @@ bool Shell::sweep_tick() {
 
         const int n = std::min<int>(3, int(m_book.pages().size()));
         for (int i = 0; i < n; ++i) S.add("plan: verbs on page " + std::to_string(i + 1), [this, i] { sweep_plan_page(i); });
+        // s27: the last page (italic.png in scripts/sweep.sh), shown with its
+        // first word to check, pictured -- italic and the spelling squiggle.
+        S.add("the last page, its first word to check", [this] {
+            go_to(int(m_book.pages().size()) - 1);
+            activate_action("win.next");
+        });
+        S.add("the last page, pictured", [this] { sweep_shot("2_last_page"); });
         S.add("plan: the canvas, page 1", [this] { go_to(0); sweep_plan_canvas(); });
         if (m_book.pages().size() > 1)
             S.add("plan: the canvas, page 2", [this] { go_to(1); sweep_plan_canvas(); });
@@ -214,10 +221,78 @@ void Shell::sweep_plan_page(int index) {
     std::vector<Sweep::Step> v;
     v.push_back({pg + "go to", [this, index] { go_to(index); }});
     for (const char* a : {"win.next", "win.accept", "win.next", "win.accept", "win.undo", "win.redo",
+                          "win.next", "win.italic", "win.italic", "win.undo", "win.next", "win.add-word",
+                          "win.undo", "win.redo", "win.undo",
                           "win.page-next", "win.page-prev", "win.fit-width", "win.zoom-in", "win.zoom-in",
                           "win.zoom-out", "win.fit-page", "win.draw", "win.draw", "win.read-page",
                           "win.undo", "win.redo", "win.save", "win.cancel"})
         v.push_back({pg + a, act(a)});
+    // s28: the format bar -- every format on the current word, a selection of
+    // words bolded and unbolded, Heading on the area and off, all undone.
+    v.push_back({pg + "format: a word to format", [this] { activate_action("win.next"); }});
+    for (const char* a : {"win.fmt-bold", "win.italic", "win.fmt-underline", "win.fmt-smallcaps",
+                          "win.fmt-super", "win.fmt-bold", "win.undo", "win.redo"})
+        v.push_back({pg + a, act(a)});
+    v.push_back({pg + "format: bold on the first line selected", [this] {
+        const core::Page* p = current();
+        if (!p) return;
+        for (std::size_t a = 0; a < p->areas.size(); ++a)
+            if (ocr::kind_is_text(p->areas[a].kind) && !p->areas[a].paras.empty() &&
+                !p->areas[a].paras[0].lines.empty() && !p->areas[a].paras[0].lines[0].words.empty()) {
+                const int n = int(p->areas[a].paras[0].lines[0].words.size());
+                m_text.select_words(WordRef{int(a), 0, 0, 0}, WordRef{int(a), 0, 0, n - 1});
+                format_words(ocr::kBold);
+                return;
+            }
+        std::cout << "sweep note: no text line to select on this page\n";
+    }});
+    v.push_back({pg + "format: pictured", [this] { sweep_shot("4_format"); }});
+    v.push_back({pg + "format: the same selection, bold off", [this] { format_words(ocr::kBold); }});
+    v.push_back({pg + "format: Heading with no area", [this] { m_area = -1; format_heading(); }});
+    for (const char* a : {"win.undo", "win.undo", "win.undo"}) v.push_back({pg + a, act(a)});
+    // s28: the arrows turn the page when the keyboard is not in the text.
+    v.push_back({pg + "arrows: Right, then Left, back where it was", [this, index] {
+        set_focus(m_view);
+        const int at = m_book.index_of(m_page_id);
+        on_key(GDK_KEY_Right, 0, Gdk::ModifierType{});
+        const int moved = m_book.index_of(m_page_id);
+        on_key(GDK_KEY_Left, 0, Gdk::ModifierType{});
+        const bool last = at + 1 >= int(m_book.pages().size());
+        if ((!last && moved != at + 1) || m_book.index_of(m_page_id) != at) {
+            ++m_sweep->fails;
+            std::cout << "sweep FAIL arrows on page " << index + 1 << ": " << at << " -> " << moved
+                      << " -> " << m_book.index_of(m_page_id) << "\n";
+        }
+    }});
+    v.push_back({pg + "arrows: in the text they are the cursor's", [this, index] {
+        m_text.focus_text();
+        const int at = m_book.index_of(m_page_id);
+        if (keyboard_in_text()) {
+            on_key(GDK_KEY_Right, 0, Gdk::ModifierType{});
+            if (m_book.index_of(m_page_id) != at) {
+                ++m_sweep->fails;
+                std::cout << "sweep FAIL arrows in the text turned page " << index + 1 << "\n";
+            }
+        } else {
+            std::cout << "sweep note: the text did not take the keyboard; arrow-in-text not armed\n";
+        }
+    }});
+    // s27: find and replace -- the bar, a walk, one replace, all, undone.
+    v.push_back({pg + "find: open the bar on \"the\"", [this] {
+        activate_action("win.find");
+        m_find_q.set_text("the");
+        m_find_with.set_text("THE");
+    }});
+    for (const char* a : {"win.find-next", "win.find-next", "win.find-prev"}) v.push_back({pg + a, act(a)});
+    v.push_back({pg + "find: pictured", [this] { sweep_shot("3_find"); }});
+    v.push_back({pg + "find: Replace", [this] { find_replace_one(); }});
+    v.push_back({pg + "find: Replace All", [this] { find_replace_all(); }});
+    v.push_back({pg + "find: Replace All with nothing found", [this] {
+        m_find_q.set_text("zzqqzz");
+        find_replace_all();
+    }});
+    for (const char* a : {"win.undo", "win.undo", "win.redo", "win.undo"}) v.push_back({pg + a, act(a)});
+    v.push_back({pg + "find: closed", [this] { find_show(false); m_find_q.set_text(""); }});
     v.push_back({pg + "Book Settings, opened and closed", [this] {
         activate_action("win.book-settings");
         m_settings_pop.popdown();

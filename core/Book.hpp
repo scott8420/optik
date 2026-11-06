@@ -61,12 +61,18 @@ struct Settings {
     bool mark_headings      = true;  // read: a short centred block with space below -> Heading
     bool mend_quotes        = true;  // read: ``Stop'' / ""Stop"" -> one typographic quote
     bool small_caps         = true;  // read: caps headings upper-cased, chapter openers doubted
+    bool mark_italic        = true;  // read: italic words (measured) marked to check (s27)
+    bool check_spelling     = true;  // read: words not in the dictionary marked to check (s27)
     bool operator==(const Settings&) const = default;
 };
 
 struct Meta {
     std::string title;
     Settings    settings;
+    // The book's own words (s27): names and coinages the author has told the
+    // spelling pass are right -- "Add to Book's Words". Kept sorted, one each
+    // (case as the author accepted it; matched without regard to case).
+    std::vector<std::string> words;
     bool operator==(const Meta&) const = default;
 };
 
@@ -94,7 +100,8 @@ public:
     const Scan* scan(const std::string& id) const;
     std::string scan_path(const std::string& scan_id) const;
 
-    // Words wanting a look: under the threshold, not yet checked.
+    // Words wanting a look: under the threshold, doubted by a pass, or unknown
+    // to the dictionary (s27) -- and not yet checked.
     bool uncertain(const ocr::Word& w) const;
     int  uncertain_count(const Page& p) const;
 

@@ -2,6 +2,7 @@
 #include "Shell.hpp"
 
 #include "core/Reading.hpp"
+#include "core/Spell.hpp"
 
 namespace optik {
 
@@ -63,6 +64,46 @@ void Shell::accept_word() {
     });
     next_to_check();
 }
+
+// Ctrl+Shift+Enter (s27): this word is right, and so is every word made of the
+// same parts, in this book -- now and on every later read. The parts go into the
+// book's words; every word the dictionary marked that is made only of book
+// words loses the mark; this one is accepted. One step: Ctrl+Z takes it all back.
+void Shell::add_book_word() {
+    m_text.commit_now();
+    const core::Page* p = current();
+    const ocr::Word* cw = p && m_word.valid() ? word_at(*p, m_word) : nullptr;
+    if (!cw) return;
+    const auto parts = core::spell_parts(cw->text);
+    if (parts.empty()) { say("Nothing in that word to remember."); return; }
+    std::string shown;
+    for (const auto& s : parts) shown += (shown.empty() ? "" : "-") + s;
+    const WordRef r = m_word;
+    const std::string here = m_page_id;
+    step("Add \u201C" + shown + "\u201D to the book's words", [&](core::Edit& e) {
+        for (const auto& s : parts) core::add_book_word(e.meta().words, s);
+        const auto words = e.meta().words;
+        for (const auto& pg : e.book().pages()) {
+            // Touch only the pages that change (a step's pictures are per page).
+            bool any = false;
+            for (const auto& a : pg.areas)
+                for (const auto& q : a.paras)
+                    for (const auto& l : q.lines)
+                        for (const auto& w : l.words) any = any || w.unknown;
+            if (!any) continue;
+            std::vector<ocr::Area> trial = pg.areas;
+            if (core::clear_book_words(trial, words) > 0) e.page(pg.id).areas = std::move(trial);
+        }
+        auto& w = e.page(here).areas[std::size_t(r.area)].paras[std::size_t(r.para)]
+                      .lines[std::size_t(r.line)].words[std::size_t(r.word)];
+        w.checked = true;
+    });
+    next_to_check();
+}
+
+// Ctrl+I (s27): the author's say on italic -- s28: one of the format bar's
+// verbs (Shell_format.cpp), on the selection or the current word.
+void Shell::toggle_italic() { format_words(ocr::kItalic); }
 
 void Shell::on_text_edited(const std::string& page_id, const std::vector<WordEdit>& edits) {
     if (!m_book.page(page_id)) return;

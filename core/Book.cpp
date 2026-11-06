@@ -37,7 +37,10 @@ Rect rect_in(const json& j) {
 // A word is an array, not an object: a book holds a hundred thousand of them,
 // and the file stays readable either way. [text, box, conf, flags, original?]
 json word_out(const ocr::Word& w) {
-    const int flags = (w.checked ? 1 : 0) | (w.edited ? 2 : 0) | (w.doubt ? 4 : 0);
+    const int flags = (w.checked ? 1 : 0) | (w.edited ? 2 : 0) | (w.doubt ? 4 : 0) |
+                      (w.italic ? 8 : 0) | (w.unknown ? 16 : 0) |     // s27: italic 8, unknown 16
+                      (w.bold ? 32 : 0) | (w.underline ? 64 : 0) |      // s28: the format bar
+                      (w.small_caps ? 128 : 0) | (w.superscript ? 256 : 0);
     json j = json::array({w.text, rect_out(w.box), std::round(w.conf * 10.0f) / 10.0f, flags});
     if (w.edited) j.push_back(w.original);
     return j;
@@ -51,6 +54,12 @@ ocr::Word word_in(const json& j) {
     w.checked = flags & 1;
     w.edited  = flags & 2;
     w.doubt   = flags & 4;
+    w.italic  = flags & 8;
+    w.unknown = flags & 16;
+    w.bold        = flags & 32;
+    w.underline   = flags & 64;
+    w.small_caps  = flags & 128;
+    w.superscript = flags & 256;
     if (j.size() > 4) w.original = j.at(4).get<std::string>();
     return w;
 }
@@ -103,7 +112,8 @@ json settings_out(const Settings& s) {
             {"split_spreads", s.split_spreads}, {"mark_running_heads", s.mark_running_heads},
             {"join_pages", s.join_pages}, {"dehyphenate", s.dehyphenate},
             {"mark_headings", s.mark_headings}, {"mend_quotes", s.mend_quotes},
-            {"small_caps", s.small_caps}};
+            {"small_caps", s.small_caps}, {"mark_italic", s.mark_italic},
+            {"check_spelling", s.check_spelling}};
 }
 Settings settings_in(const json& j) {
     Settings s;   // a key missing from an older file keeps its default
@@ -116,6 +126,8 @@ Settings settings_in(const json& j) {
     s.mark_headings      = j.value("mark_headings", s.mark_headings);
     s.mend_quotes        = j.value("mend_quotes", s.mend_quotes);
     s.small_caps         = j.value("small_caps", s.small_caps);
+    s.mark_italic        = j.value("mark_italic", s.mark_italic);
+    s.check_spelling     = j.value("check_spelling", s.check_spelling);
     return s;
 }
 
@@ -160,6 +172,8 @@ Status Book::open(const std::string& folder, Book& out) {
         b.m_meta.title    = j.value("title", "");
         b.m_meta.settings = settings_in(j.value("settings", json::object()));
         b.m_next_id       = j.value("next_id", 1);
+        for (const auto& jw : j.value("words", json::array()))      // s27
+            b.m_meta.words.push_back(jw.get<std::string>());
         for (const auto& js : j.at("scans"))
             b.m_scans.push_back(Scan{js.at("id"), js.at("file"), js.value("source", "")});
         for (const auto& jp : j.at("pages")) {
@@ -193,9 +207,10 @@ Status Book::save() const {
         if (p.turns) jp["turns"] = p.turns;
         pages.push_back(std::move(jp));
     }
-    const json j = {{"schema", kSchema}, {"title", m_meta.title},
-                    {"settings", settings_out(m_meta.settings)}, {"next_id", m_next_id},
-                    {"scans", scans}, {"pages", pages}};
+    json j = {{"schema", kSchema}, {"title", m_meta.title},
+              {"settings", settings_out(m_meta.settings)}, {"next_id", m_next_id},
+              {"scans", scans}, {"pages", pages}};
+    if (!m_meta.words.empty()) j["words"] = m_meta.words;   // s27: the book's own words
 
     // Write beside, then rename over: a crash mid-write leaves the old book.
     const fs::path file = fs::path(m_folder) / kFile;
@@ -237,7 +252,7 @@ std::string Book::scan_path(const std::string& scan_id) const {
 
 bool Book::uncertain(const ocr::Word& w) const {
     return !w.checked && !w.edited &&
-           (w.doubt || w.conf < float(m_meta.settings.uncertain_below));
+           (w.doubt || w.unknown || w.conf < float(m_meta.settings.uncertain_below));
 }
 
 int Book::uncertain_count(const Page& p) const {

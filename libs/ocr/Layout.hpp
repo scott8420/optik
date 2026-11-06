@@ -43,9 +43,28 @@ struct Word {
     bool        doubt   = false;   // a reading pass doubts it, however confident
                                    // the engine was (a small-caps opener): wants
                                    // a look until checked
-    std::string original;          // the engine's reading, kept once edited
+    bool        italic  = false;   // set in italic (s27): measured from the
+                                   // pixels (Slant.hpp) or set by the author
+    bool        unknown = false;   // not in the dictionary nor the book's own
+                                   // words (s27): wants a look until checked
+    // Character formats set by the author on the format bar (s28): carried to
+    // the ODT as Writer character styles. Italic above is one of them too.
+    bool        bold       = false;
+    bool        underline  = false;
+    bool        small_caps = false;
+    bool        superscript = false;
+    std::string original;         // the engine's reading, kept once edited
     bool operator==(const Word&) const = default;
 };
+
+// A word's character format as bits (s28): the format bar's verbs and export's
+// runs work on these. One bit each; order is the nesting order of ODT spans.
+enum Fmt : unsigned {
+    kItalic = 1, kBold = 2, kUnderline = 4, kSmallCaps = 8, kSuperscript = 16,
+    kFmtAll = 31
+};
+unsigned fmt_of(const Word& w);
+void     set_fmt(Word& w, unsigned bits, bool on);
 
 struct Line {
     Rect              box;

@@ -16,6 +16,10 @@ void passes_tests();
 void recent_tests();
 void audit_tests();
 void pageops_tests();
+void italic_tests();
+void spelling_tests();
+void find_tests();
+void format_tests();
 
 namespace optik::test {
 static int g_pass = 0, g_fail = 0;
@@ -38,6 +42,10 @@ int main() {
     recent_tests();
     audit_tests();
     pageops_tests();
+    italic_tests();
+    spelling_tests();
+    find_tests();
+    format_tests();
     std::cout << "---------------------------------\n";
     std::cout << optik::test::passes() << " pass / " << optik::test::failures() << " fail\n";
     return optik::test::failures() == 0 ? 0 : 1;

@@ -33,6 +33,12 @@ public:
     void set_word(const WordRef& w, bool focus);   // highlight + scroll + cursor
     bool commit_now();                              // true if an edit went out
 
+    // s28, the format bar: the words the selection touches (empty: none
+    // selected), and selecting a run of words again after a rebuild.
+    std::vector<WordRef> selected_words() const;
+    void select_words(const WordRef& first, const WordRef& last);
+    void focus_text() { m_view.grab_focus(); }
+
     sigc::signal<void(WordRef)>                                  signal_word_focused;
     sigc::signal<void(std::string, std::vector<WordEdit>)>      signal_edited;
 
@@ -51,6 +57,8 @@ private:
     widgets::TextView m_view;
     Glib::RefPtr<Gtk::TextBuffer> m_buf;
     Glib::RefPtr<Gtk::TextTag> m_tag_uncertain, m_tag_current, m_tag_chrome, m_tag_empty;
+    Glib::RefPtr<Gtk::TextTag> m_tag_italic, m_tag_unknown;   // s27
+    Glib::RefPtr<Gtk::TextTag> m_tag_bold, m_tag_underline, m_tag_smallcaps, m_tag_super;   // s28
 
     const core::Book* m_book = nullptr;
     std::string       m_page_id;
