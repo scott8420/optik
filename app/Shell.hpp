@@ -25,8 +25,10 @@
 #include "core/Jobs.hpp"
 #include "core/Recent.hpp"
 #include "core/Undo.hpp"
+#include "core/ZipIntake.hpp"
 #include "widgets/Widgets.hpp"
 
+#include <giomm/cancellable.h>
 #include <giomm/menu.h>
 #include <giomm/simpleaction.h>
 #include <glibmm/dispatcher.h>
@@ -168,6 +170,11 @@ private:
     std::string m_export_for;                               // the book the page range is for
     std::shared_ptr<std::atomic<bool>> m_export_stop;       // s31: the export under way's cancel
     std::shared_ptr<std::atomic<bool>> m_import_stop;       // s33: a zip being unpacked
+    std::shared_ptr<core::zipin::Progress> m_zip_progress;  // s33b: copy / unpack / import counters
+    Glib::RefPtr<Gio::Cancellable> m_import_cancel;         // s33b: stops the copy off the share
+    sigc::connection m_zip_watch;                           // s33b: redraws the progress window
+    std::string m_zip_title;
+    void zip_done();                                         // files: s33b, the zip's job is over
     Glib::Dispatcher m_dispatch;
 
     std::string m_page_id;

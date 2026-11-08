@@ -78,6 +78,23 @@ void Shell::refresh_progress_dialog() {
     }
     m_pdlg->set_title(m_batch_label);
     m_pdlg_what.set_text(m_batch_label + "…");
+    if (m_zip_progress) {   // s33b: a zip coming in -- copy, unpack, import
+        const int ph = m_zip_progress->phase.load();
+        const auto done = m_zip_progress->done.load(), total = m_zip_progress->total.load();
+        auto mb = [](std::uint64_t b) { return std::to_string((b + 524288) / 1048576); };
+        if ((ph == 1 || ph == 2) && total > 0) {
+            m_pdlg_pulse.disconnect();
+            m_pdlg_bar.set_fraction(double(done) / double(total));
+            m_pdlg_count.set_text(ph == 1 ? "Copying from the library: " + mb(done) + " of " + mb(total) + " MB"
+                                          : "Unpacking: scan " + std::to_string(done) + " of " + std::to_string(total));
+        } else {
+            if (!m_pdlg_pulse.connected())
+                m_pdlg_pulse = Glib::signal_timeout().connect([this] { m_pdlg_bar.pulse(); return true; }, 120);
+            m_pdlg_count.set_text(ph <= 1 ? "Opening the zip on the library…" : "Putting the scans into the book…");
+        }
+        if (!m_pdlg->get_visible()) m_pdlg->present();
+        return;
+    }
     if (m_batch_total > 1) {
         m_pdlg_pulse.disconnect();
         m_pdlg_bar.set_fraction(double(m_batch_done) / m_batch_total);
@@ -105,6 +122,8 @@ void Shell::on_cancel() {
     m_jobs.cancel();
     if (m_export_stop) m_export_stop->store(true);   // s31: an export writes nothing
     if (m_import_stop) m_import_stop->store(true);   // s33: a zip stops unpacking
+    if (m_import_cancel) m_import_cancel->cancel();  // s33b: and stops copying
+    zip_done();
     const int done = m_batch_done, total = m_batch_total;
     m_batch_total = m_batch_done = 0;
     m_pictures_pending.clear();

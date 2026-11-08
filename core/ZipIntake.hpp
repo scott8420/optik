@@ -11,11 +11,16 @@
 //             are gigabytes), then intake::discover on that folder orders them
 //             exactly as a scans folder would be ordered.
 //
+// s33b (Scott): the zip is first COPIED off the share to a local scratch
+// folder (the app does that with GIO, which reads the gvfs/SMB mount the way
+// Files does), and the book is made locally -- never on the share.
+//
 // The zip is only ever read. Entries are never written outside `dest`: an
 // absolute name or a ".." part is passed over, not trusted.
 #include "model/Intake.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -36,6 +41,14 @@ struct Listing {
 
 Listing list(const std::string& zip, const model::intake::Options& opt = {});
 
+// Live counters a worker fills and the window reads (atomics: no locks, the UI
+// never waits). Phase 1 copies bytes, phase 2 unpacks scans, phase 3 imports.
+struct Progress {
+    std::atomic<int>           phase{0};
+    std::atomic<std::uint64_t> done{0};
+    std::atomic<std::uint64_t> total{0};
+};
+
 struct Unpacked {
     std::string folder;           // where the scans now are (== dest)
     std::size_t written = 0;
@@ -47,15 +60,20 @@ struct Unpacked {
 // when set, is checked between entries; a stopped unpack reports cancelled.
 Unpacked unpack(const std::string& zip, const std::string& dest,
                 const model::intake::Options& opt = {},
-                const std::atomic<bool>* stop = nullptr);
+                const std::atomic<bool>* stop = nullptr,
+                Progress* progress = nullptr);   // s33b: done/total = scans
 
 // The book's name for a zip: its stem, or -- for a generic name like
 // "Archive.zip" -- the folder it sits in ("Retief's War/Archive.zip" ->
 // "Retief's War").
 std::string book_name(const std::string& zip);
 
-// Where the book goes: beside the zip, <dir>/<book_name>.optik.
-std::string book_folder(const std::string& zip);
+// The book's folder name: "<Author> - <Title>" for a generic zip in a library
+// (".../Alexander, Lloyd/The Black Cauldron/Archive.zip"), else book_name.
+std::string folder_name(const std::string& zip);
+
+// Where the book goes (s33b): local, <books_root>/<folder_name>.optik.
+std::string book_folder(const std::string& zip, const std::string& books_root);
 
 // A fresh scratch folder for one unpack, under $XDG_CACHE_HOME (or
 // ~/.cache)/optik/intake/. The caller removes it when the import is done.

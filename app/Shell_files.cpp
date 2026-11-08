@@ -10,6 +10,7 @@
 #include "model/Intake.hpp"
 
 #include <giomm/file.h>
+#include <glibmm/miscutils.h>
 #include <gtkmm/aboutdialog.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/entry.h>
@@ -28,7 +29,9 @@ void Shell::open_path(const std::string& path) {
     std::error_code ec;
     if (fs::exists(fs::path(path) / "book.json", ec)) open_book(path);
     else if (fs::is_directory(path, ec))             new_from_scans(path);
-    else if (fs::is_regular_file(path, ec) && core::zipin::is_zip(path)) new_from_zip(path);   // s33
+    // s33b: a zip on a gvfs/SMB share may not stat as a "regular file":
+    // anything named .zip that isn't a folder goes to the zip path.
+    else if (core::zipin::is_zip(path))               new_from_zip(path);
     else say("Not a book, a folder of scans, or a zip of scans: " + path);
 }
 
@@ -144,13 +147,25 @@ core::Jobs::Landing Shell::import_landing(std::shared_ptr<core::ImportPlan> plan
     };
 }
 
-// s33: scans that come as a zip (Librioteca's Author/Title/Archive.zip). The
-// book goes beside the zip, named for it -- or for its folder when the zip is
-// a generic "Archive.zip". The zip is only read: its scans are unpacked to a
-// scratch folder under ~/.cache/optik/intake, copied into the book like any
-// scans folder, and the scratch folder removed. All of it on the worker.
+// s33 / s33b: scans that come as a zip (Librioteca's Author/Title/Archive.zip,
+// on the Pi's share). Scott, s33b: copy the zip off the share first, with a
+// progress bar. So, all on the worker:
+//   1. copy the zip to ~/.cache/optik/intake/<name>-<n>/ with GIO -- the same
+//      layer Files uses, so a gvfs/SMB mount reads as it does there;
+//   2. unpack its scans there (the zip is only read);
+//   3. make the book LOCALLY, ~/Documents/Optik/<Author> - <Title>.optik,
+//      copy the scans in, remove the scratch folder.
+// The progress window shows MB copied, then scans unpacked. Cancel stops any
+// phase and leaves nothing in the cache. Opening the zip again opens its book
+// (or finishes an import that never landed).
 void Shell::new_from_zip(const std::string& zip) {
-    const std::string book_dir = core::zipin::book_folder(zip);
+    std::string docs = Glib::get_user_special_dir(Glib::UserDirectory::DOCUMENTS);
+    if (docs.empty()) docs = (fs::path(Glib::get_home_dir()) / "Documents").string();
+    const std::string books = (fs::path(docs) / "Optik").string();
+    const std::string book_dir = core::zipin::book_folder(zip, books);
+    const std::string title = core::zipin::book_name(zip);
+    if (auto lg = log::get(log::Area::App)) lg->info("zip: {} -> {}", zip, book_dir);
+
     std::error_code ec;
     const bool had_book = fs::exists(fs::path(book_dir) / "book.json", ec);
     if (had_book) {
@@ -159,43 +174,88 @@ void Shell::new_from_zip(const std::string& zip) {
         if (!m_book.pages().empty()) { say("This zip already has a book; opened it."); return; }
         // An import that never finished (cancelled, or Optik closed): go on with it.
     }
-    const auto listing = core::zipin::list(zip);
-    if (!listing.ok()) { say(listing.explain()); return; }
-
-    if (!had_book) {
-        core::Book b;
-        const auto st = core::Book::create(book_dir, core::zipin::book_name(zip), b);
-        if (st != core::Status::Ok) { say(std::string("Could not make the book: ") + core::status_text(st)); return; }
-        open_book(book_dir);
-        if (!m_has_book) return;
-    }
+    if (m_zip_progress) { say("A zip is already coming in; wait for it, or Cancel."); return; }
 
     const bool split = m_book.meta().settings.split_spreads;
-    const std::string dest = m_book.folder();
-    const std::string scratch = core::zipin::scratch_folder(core::zipin::book_name(zip));
+    const std::string scratch = core::zipin::scratch_folder(title);
     m_import_stop = std::make_shared<std::atomic<bool>>(false);
+    m_import_cancel = Gio::Cancellable::create();
+    m_zip_progress = std::make_shared<core::zipin::Progress>();
+    m_zip_title = title;
     auto stop = m_import_stop;
-    batch_begin("Unpacking " + std::to_string(listing.scans) + " scans from the zip", 1, true);
-    m_jobs.submit([this, zip, scratch, split, dest, stop](ocr::Engine&) -> core::Jobs::Landing {
-        const auto up = core::zipin::unpack(zip, scratch, {}, stop.get());
+    auto cancel = m_import_cancel;
+    auto pr = m_zip_progress;
+    batch_begin("Bringing in " + title, 1, true);
+    m_zip_watch = Glib::signal_timeout().connect([this] { refresh_progress_dialog(); return bool(m_zip_progress); }, 150);
+
+    m_jobs.submit([this, zip, scratch, split, book_dir, title, had_book, stop, cancel, pr](ocr::Engine&)
+                  -> core::Jobs::Landing {
         std::error_code rec;
-        if (up.cancelled) {
-            fs::remove_all(scratch, rec);
-            return [] {};
+        auto gone = [&] { fs::remove_all(scratch, rec); };
+        auto fail = [&](const std::string& why) -> core::Jobs::Landing {
+            gone();
+            return [this, why] { zip_done(); batch_tick(); say(why); };
+        };
+        auto cancelled = [&]() -> core::Jobs::Landing {
+            gone();
+            return [this] { zip_done(); };
+        };
+
+        // 1. copy the zip off the share
+        fs::create_directories(scratch, rec);
+        const std::string local = (fs::path(scratch) / "source.zip").string();
+        pr->phase = 1;
+        try {
+            auto src = Gio::File::create_for_path(zip);
+            auto dst = Gio::File::create_for_path(local);
+            src->copy(dst, [pr](goffset cur, goffset tot) { pr->done = std::uint64_t(cur); pr->total = std::uint64_t(tot); },
+                      cancel, Gio::File::CopyFlags::OVERWRITE);
+        } catch (const Glib::Error& e) {
+            if (stop->load() || cancel->is_cancelled()) return cancelled();
+            return fail("Could not copy the zip from the library: " + std::string(e.what()));
         }
-        if (up.written == 0) {
-            fs::remove_all(scratch, rec);
-            const std::string why = up.error.empty() ? "nothing came out of the zip" : up.error;
-            return [this, why] { batch_tick(); say("Could not unpack the scans: " + why + "."); };
+        if (stop->load()) return cancelled();
+
+        // 2. unpack its scans
+        const auto listing = core::zipin::list(local);
+        if (!listing.ok()) return fail(listing.explain());
+        pr->phase = 2;
+        const std::string scans = (fs::path(scratch) / "scans").string();
+        const auto up = core::zipin::unpack(local, scans, {}, stop.get(), pr.get());
+        if (up.cancelled || stop->load()) return cancelled();
+        if (up.written == 0)
+            return fail("Could not unpack the scans: " + (up.error.empty() ? std::string("nothing came out of the zip") : up.error) + ".");
+        fs::remove(local, rec);   // the copy is done with: half the scratch space back
+
+        // 3. the book, locally; the scans into it
+        pr->phase = 3;
+        std::string dest = book_dir;
+        if (!had_book) {
+            core::Book b;
+            const auto st = core::Book::create(book_dir, title, b);
+            if (st != core::Status::Ok)
+                return fail("Could not make the book at " + book_dir + ": " + core::status_text(st));
+            dest = b.folder();
         }
         std::vector<std::string> paths;
-        for (const auto& f : model::intake::discover(scratch).scans) paths.push_back(f.path);
+        for (const auto& f : model::intake::discover(scans).scans) paths.push_back(f.path);
         auto plan = std::make_shared<core::ImportPlan>(core::plan_import(paths, split));
         auto copied = std::make_shared<std::vector<core::Scan>>(core::copy_scans(dest, plan->paths));
-        fs::remove_all(scratch, rec);
-        return import_landing(plan, copied, dest,
-                              up.error.empty() ? "" : "Some of the zip could not be read: " + up.error + ".");
+        gone();
+        const std::string note = up.error.empty() ? "" : "Some of the zip could not be read: " + up.error + ".";
+        return [this, plan, copied, dest, note] {
+            zip_done();
+            if (!(m_has_book && m_book.folder() == dest)) open_book(dest);
+            if (!m_has_book) { batch_tick(); return; }
+            import_landing(plan, copied, m_book.folder(), note)();
+        };
     });
+}
+
+void Shell::zip_done() {
+    m_zip_progress.reset();
+    m_zip_watch.disconnect();
+    m_import_cancel.reset();
 }
 
 // s33 (Scott: "a close project to an empty optik state"). Saves first if
@@ -208,6 +268,8 @@ void Shell::close_book() {
     m_jobs.cancel();
     if (m_export_stop) m_export_stop->store(true);
     if (m_import_stop) m_import_stop->store(true);
+    if (m_import_cancel) m_import_cancel->cancel();
+    zip_done();
     m_batch_total = m_batch_done = 0;
     if (m_export_win) m_export_win->set_visible(false);
     if (m_recut) m_recut->set_visible(false);

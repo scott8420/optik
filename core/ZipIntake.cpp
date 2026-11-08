@@ -97,7 +97,8 @@ Listing list(const std::string& zip, const model::intake::Options& opt) {
 }
 
 Unpacked unpack(const std::string& zip, const std::string& dest,
-                const model::intake::Options& opt, const std::atomic<bool>* stop) {
+                const model::intake::Options& opt, const std::atomic<bool>* stop,
+                Progress* progress) {
     Unpacked u;
     u.folder = dest;
     int err = 0;
@@ -110,6 +111,15 @@ Unpacked unpack(const std::string& zip, const std::string& dest,
 
     std::vector<char> buf(1 << 16);
     const zip_int64_t n = zip_get_num_entries(z, 0);
+    if (progress) {
+        std::uint64_t want = 0;
+        for (zip_int64_t i = 0; i < n; ++i) {
+            const char* nm = zip_get_name(z, zip_uint64_t(i), 0);
+            if (nm && !is_dir_entry(nm) && wanted(nm, opt)) ++want;
+        }
+        progress->done = 0;
+        progress->total = want;
+    }
     for (zip_int64_t i = 0; i < n; ++i) {
         if (stop && stop->load()) { u.cancelled = true; break; }
         const char* nm = zip_get_name(z, zip_uint64_t(i), 0);
@@ -134,6 +144,7 @@ Unpacked unpack(const std::string& zip, const std::string& dest,
         if (u.cancelled) { fs::remove(out, ec); break; }
         if (!good) { if (u.error.empty()) u.error = "could not write " + out.string(); fs::remove(out, ec); continue; }
         ++u.written;
+        if (progress) ++progress->done;
     }
     zip_close(z);
     return u;
@@ -152,9 +163,20 @@ std::string book_name(const std::string& zip) {
     return stem.empty() ? std::string("Book") : stem;
 }
 
-std::string book_folder(const std::string& zip) {
-    const fs::path p = fs::absolute(fs::path(zip)).lexically_normal();
-    return (p.parent_path() / (book_name(zip) + ".optik")).string();
+std::string folder_name(const std::string& zip) {
+    const fs::path p = fs::path(zip).lexically_normal();
+    const std::string name = book_name(zip);
+    if (name != p.stem().string()) {   // generic zip: named for its folder -- add the author's
+        const std::string author = p.parent_path().parent_path().filename().string();
+        if (!author.empty() && author != "/") return author + " - " + name;
+    }
+    return name;
+}
+
+std::string book_folder(const std::string& zip, const std::string& books_root) {
+    std::string n;
+    for (char c : folder_name(zip)) n += (c == '/' || c == '\\') ? '_' : c;
+    return (fs::path(books_root) / (n + ".optik")).string();
 }
 
 std::string scratch_folder(const std::string& name) {

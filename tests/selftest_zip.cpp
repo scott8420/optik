@@ -66,8 +66,12 @@ void zip_tests() {
     check("zip: a generic Archive.zip takes its folder's name",
           zi::book_name("/lib/Fiction/Laumer, Keith/Retief's War/Archive.zip") == "Retief's War");
     check("zip: any other zip keeps its own name", zi::book_name("/x/Ivory Charm.zip") == "Ivory Charm");
-    check("zip: the book goes beside the zip",
-          zi::book_folder("/lib/Retief's War/Archive.zip") == "/lib/Retief's War/Retief's War.optik");
+    check("zip: a library zip's book is \"Author - Title\", made locally (s33b)",
+          zi::book_folder("/run/user/1000/gvfs/smb-share:server=raspi.local,share=ssd1/EBOOKS/Fiction/"
+                          "Laumer, Keith/Retief's War/Archive.zip", "/home/s/Documents/Optik")
+              == "/home/s/Documents/Optik/Laumer, Keith - Retief's War.optik");
+    check("zip: any other zip's book keeps the zip's name",
+          zi::book_folder("/x/Ivory Charm.zip", "/b") == "/b/Ivory Charm.optik");
     {
         const char* old = std::getenv("XDG_CACHE_HOME");
         const std::string keep = old ? old : "";
@@ -116,7 +120,9 @@ void zip_tests() {
     }
 
     const fs::path scratch = root / "scratch";
-    const auto up = zi::unpack(zipf.string(), scratch.string());
+    zi::Progress pr;
+    const auto up = zi::unpack(zipf.string(), scratch.string(), {}, nullptr, &pr);
+    check("zip: progress counts the scans unpacked (s33b)", pr.total == 3 && pr.done == 3);
     check("zip: unpack writes the three scans", up.written == 3 && !up.cancelled && up.error.empty(), up.error);
     check("zip: subfolders are kept, bytes are exact",
           slurp(scratch / "scans" / "2.png") == page && slurp(scratch / "scans" / "10.png") == other &&
@@ -146,7 +152,7 @@ void zip_tests() {
         for (const auto& f : found.scans) paths.push_back(f.path);
         const auto plan = core::plan_import(paths, false);
         core::Book b;
-        const std::string dir = zi::book_folder(zipf.string());
+        const std::string dir = zi::book_folder(zipf.string(), (root / "books").string());
         const bool made = core::Book::create(dir, zi::book_name(zipf.string()), b) == core::Status::Ok;
         const auto copied = core::copy_scans(b.folder(), plan.paths);
         fs::remove_all(scratch);
@@ -156,8 +162,8 @@ void zip_tests() {
             for (const auto& s : copied) scans.push_back(e.add_scan(s));
             for (const auto& p : core::pages_for(plan, scans)) e.insert_page(e.book().pages().size(), p);
         });
-        check("zip: the book is made beside the zip, named for the folder",
-              made && fs::path(b.folder()).filename() == "Retief's War.optik" && b.meta().title == "Retief's War",
+        check("zip: the book is made in the books folder, titled for the zip's folder",
+              made && fs::path(b.folder()).parent_path() == root / "books" && b.meta().title == "Retief's War",
               b.folder());
         check("zip: the scans are the book's own once the scratch folder is gone",
               b.pages().size() == 3 && copied.size() == 3 && fs::exists(b.scan_path(b.pages()[0].scan_id)));
