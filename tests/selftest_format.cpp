@@ -97,12 +97,22 @@ void format_tests() {
     const std::string odt = (dir / "f.odt").string();
     core::write_odt(blocks, "t", odt);
     const std::string xml = content_of(odt);
-    check("export: italic + bold nest as two spans, closed in order",
-          xml.find("<text:span text:style-name=\"Emphasis\"><text:span text:style-name=\"Strong_20_Emphasis\">Secret of</text:span></text:span>") !=
-          std::string::npos);
-    check("export: underline, small caps and superscript are their styles",
-          xml.find("<text:span text:style-name=\"Underline\"><text:span text:style-name=\"Small_20_Caps\">was</text:span></text:span>") != std::string::npos &&
+    // s31: one named style a run (its first format's), the rest an automatic
+    // style inside it -- Composix keeps one character style a run.
+    check("export: italic + bold is Emphasis with bold inside it (T2), declared",
+          xml.find("<text:span text:style-name=\"Emphasis\"><text:span text:style-name=\"T2\">Secret of</text:span></text:span>") !=
+              std::string::npos &&
+          xml.find("<style:style style:name=\"T2\" style:family=\"text\"><style:text-properties fo:font-weight=\"bold\"/>") !=
+              std::string::npos);
+    check("export: bold alone is Strong Emphasis, no automatic style",
+          xml.find("<text:span text:style-name=\"Strong_20_Emphasis\">the Old Clock</text:span>") != std::string::npos);
+    check("export: underline + small caps is Underline with small caps inside (T8); superscript its style",
+          xml.find("<text:span text:style-name=\"Underline\"><text:span text:style-name=\"T8\">was</text:span></text:span>") != std::string::npos &&
+          xml.find("<style:style style:name=\"T8\" style:family=\"text\"><style:text-properties fo:font-variant=\"small-caps\"/>") != std::string::npos &&
           xml.find("<text:span text:style-name=\"Superscript\">read.1</text:span>") != std::string::npos);
+    check("export: no named style nests in another",
+          xml.find("\"><text:span text:style-name=\"Strong_20_Emphasis\"") == std::string::npos &&
+          xml.find("\"><text:span text:style-name=\"Small_20_Caps\"") == std::string::npos);
     check("export: plain text has the words only", core::plain(blocks[0].text) == "The Secret of the Old Clock was read.1");
 
     std::cout << "-- format: kept, undone\n";

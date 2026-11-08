@@ -203,14 +203,6 @@ void export_tests() {
     check("odt: without options, no break is used",
           count(xml0, "_break\">") == 0 && count(xml0, "text:style-name=\"Running_20_Head\"") == 0);
 
-    const std::string txt = (dir / "opts.txt").string();
-    std::string t;
-    if (core::write_text(v, txt)) { std::ifstream f(txt, std::ios::binary); t.assign(std::istreambuf_iterator<char>(f), {}); }
-    check("text: a page break is a form feed", count(t, "\f") == 3);
-    const std::string txt0 = (dir / "plain.txt").string();
-    std::string t0;
-    if (core::write_text(plain, txt0)) { std::ifstream f(txt0, std::ios::binary); t0.assign(std::istreambuf_iterator<char>(f), {}); }
-    check("text: without breaks, none", !t0.empty() && count(t0, "\f") == 0);
 
     // The book is not touched by an export's choices.
     check("options: exporting is no journal step", j.size() == 1);

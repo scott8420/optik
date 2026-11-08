@@ -23,6 +23,9 @@ void format_tests();
 void condition_tests();
 void export_tests();
 void languages_tests();
+void composix_tests();
+void dropcaps_tests();
+void zip_tests();
 
 namespace optik::test {
 static int g_pass = 0, g_fail = 0;
@@ -52,6 +55,9 @@ int main() {
     condition_tests();
     export_tests();
     languages_tests();
+    composix_tests();
+    dropcaps_tests();
+    zip_tests();
     std::cout << "---------------------------------\n";
     std::cout << optik::test::passes() << " pass / " << optik::test::failures() << " fail\n";
     return optik::test::failures() == 0 ? 0 : 1;

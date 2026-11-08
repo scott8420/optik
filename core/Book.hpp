@@ -69,6 +69,12 @@ struct Settings {
     bool deskew             = true;  // read: measure the page's skew, read it straightened
     bool decolour           = false; // the page in grey
     bool level              = true;  // the paper evened to white, the ink to black
+    // Dropcaps (s32): a chapter's large initial found and spliced into its
+    // first word when read; at export the paragraph either gets an ODT drop
+    // cap of the letters and lines the scan had (Rebuild) or is a plain
+    // capital (Strip).
+    bool find_dropcaps      = true;  // read: find the cap, splice its letter(s) back
+    bool rebuild_dropcaps   = true;  // export: Rebuild (true) or Strip (false)
     bool operator==(const Settings&) const = default;
 };
 

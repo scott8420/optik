@@ -33,16 +33,38 @@ proofs what is uncertain, and the book exports to ODT for LibreOffice Writer.
 - **Condition** -- before the engine (and on the screen): Deskew (the page's
   tilt measured when read, the page and its words straightened), Decolour
   (grey), Level (paper to white, ink to black). Book settings, each declinable.
+- **Dropcaps** (s32) -- a chapter's large initial found when a page is read
+  (its own area, a picture, a tall word, or missed and left as a gap beside
+  indented lines), its letter put back in the first word ("T" + "HE" ->
+  "THE", marked to check), the paragraph whole again. On export, **Rebuild**
+  (Writer draws the drop cap, as many lines deep as the scan's) or **Strip**
+  (a plain capital). Two Book settings.
 - **Undo** -- every change, Ctrl+Z / Ctrl+Shift+Z, from anywhere.
-- **Export** -- ODT (Text body + Heading 1, for Writer to restyle) or plain
-  text. Running heads and folios left out; paragraphs broken by the page turn
+- **Export** -- ODT (Text body + Heading 1, for Writer to restyle; s31: the
+  only export, Composix imports it too). Running heads and folios left out; paragraphs broken by the page turn
   joined; line-end hyphens mended; formats as Writer's character styles. Each is
   a Book setting. (s29) Export asks first: which pages (All, This Page),
   running heads kept or not, page breaks before headings or at each page.
+  (s31) The ODT carries the book's page (its trim and margins, from the scans'
+  resolution) and its pictures, and is **Composix's way in**: File > Import ODT
+  there lays the book out. `../scripts/composix_check.sh <composix tree> book.odt`
+  runs it through Composix's own importer and saves the Composix project.
 
 ## Build
 
     ./build.sh && ./build/optik_selftest && build/optik
+
+## Install (s32)
+
+    ../scripts/install.sh              # ~/.local, no sudo: Optik in the app grid
+    ../scripts/install.sh --system     # /usr/local, with sudo
+    ../scripts/uninstall.sh            # (or --system) removes exactly what install wrote
+    ../scripts/uninstall.sh --purge    # ...and the recent list and logs
+
+Install builds a Release in `build-install/` (your `build/` is left alone),
+runs the selftest (red installs nothing), installs `bin/optik`, the launcher
+and the icon, and keeps a manifest in `<prefix>/share/optik/`. Run it again to
+update. Books are never touched.
 
 Dependencies are listed at the top of `build.sh`. Run `build/optik <folder>`
 to open a book or make one from a folder of scans.

@@ -89,6 +89,14 @@ Reading read(ocr::Engine& engine, const ReadRequest& r) {
     // The passes, each the book's to decline (Passes.hpp has the order's why).
     const Settings& st = r.settings;
     if (st.mark_running_heads) mark_running_heads(out.areas, (r.turns & 1) ? r.crop.width() : r.crop.height());
+    if (st.find_dropcaps) {
+        // s32: the cap's gap read through the page as just read (straightened
+        // by the skew it was measured at), so its boxes are the page's.
+        const ocr::Look as_read{r.crop, r.turns, out.skew, st.decolour, st.level};
+        mark_dropcaps(out.areas, [&](const Rect& where, ocr::Word& w) {
+            return engine.read_word(r.scan_path, as_read, where, w);
+        });
+    }
     if (st.mark_headings)      mark_headings(out.areas);
     if (st.mend_quotes)        mend_quotes(out.areas);
     if (st.small_caps)         mark_small_caps(out.areas);

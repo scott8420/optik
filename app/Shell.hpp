@@ -34,6 +34,7 @@
 #include <gtkmm/popover.h>
 
 #include <map>
+#include <atomic>
 #include <memory>
 #include <set>
 
@@ -50,7 +51,7 @@ public:
     explicit Shell(App& app);
     ~Shell() override;
 
-    void open_path(const std::string& path);                 // files: book or scans folder
+    void open_path(const std::string& path);                 // files: book, scans folder, or zip (s33)
     void reopen_last();                                      // files: a plain start (s25)
     void start_sweep();                                      // sweep (Sweep.cpp, s26)
 
@@ -77,6 +78,11 @@ private:
     void on_open();                                          // handler: Open Book
     void on_new_from_scans();                                // handler: New from Scans
     void new_from_scans(const std::string& folder);          // files
+    void new_from_zip(const std::string& zip);               // files: s33, a zip of scans
+    void close_book();                                       // files: s33, back to the empty start
+    core::Jobs::Landing import_landing(std::shared_ptr<core::ImportPlan> plan,
+                                       std::shared_ptr<std::vector<core::Scan>> copied,
+                                       std::string dest, std::string note);   // files: shared by both imports
     void open_book(const std::string& folder);               // files
     bool save();                                             // files
     void on_save_as();                                       // handler: Save As (s25)
@@ -160,6 +166,8 @@ private:
     std::function<void()> m_export_take;                    // ...and back (Export…; the sweep)
     core::ExportOptions m_export_opts;                      // the session's, not the book's (s29)
     std::string m_export_for;                               // the book the page range is for
+    std::shared_ptr<std::atomic<bool>> m_export_stop;       // s31: the export under way's cancel
+    std::shared_ptr<std::atomic<bool>> m_import_stop;       // s33: a zip being unpacked
     Glib::Dispatcher m_dispatch;
 
     std::string m_page_id;

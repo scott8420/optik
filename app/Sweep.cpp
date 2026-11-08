@@ -158,6 +158,20 @@ bool Shell::sweep_tick() {
             }
         });
         S.add("the crooked page, pictured", [this] { sweep_shot("5_straightened"); });
+        // s32: the dropcap page (dropcap.png in scripts/sweep.sh) is read with
+        // its cap found and spliced; shown with the word it opens.
+        S.add("the dropcap page, its cap found", [this] {
+            bool any = false;
+            for (int i = 0; i < int(m_book.pages().size()) && !any; ++i)
+                for (const auto& a : m_book.pages()[std::size_t(i)].areas)
+                    for (const auto& p : a.paras)
+                        if (p.cap_letters > 0 && !any) { go_to(i); any = true; }
+            if (!any && m_book.meta().settings.find_dropcaps && m_book.pages().size() > 4) {
+                ++m_sweep->fails;
+                std::cout << "sweep FAIL no dropcap was found (a dropcap page is in the book)" << std::endl;
+            }
+        });
+        S.add("the dropcap page, pictured", [this] { sweep_shot("5b_dropcap"); });
         // s29: Export's options -- the window opened, set through its own boxes
         // (This Page, heads kept, breaks before headings), taken, written; then
         // All and the defaults back. A file chooser cannot be driven: export_to
@@ -167,7 +181,9 @@ bool Shell::sweep_tick() {
         S.add("export: pictured", [this] { if (m_export_win) sweep_shot_of(*m_export_win, "6_export"); });
         auto press = [this](const char* name) {
             return [this, name] {
-                if (auto* bt = dynamic_cast<Gtk::Button*>(registry::find(name))) bt->activate();
+                // s31: clicked, not activate(): GtkButton::activate clicks on a timeout,
+                // so a slow (ASan) run read the window before the press landed.
+                if (auto* bt = dynamic_cast<Gtk::Button*>(registry::find(name))) g_signal_emit_by_name(bt->gobj(), "clicked");
                 else { ++m_sweep->fails; std::cout << "sweep FAIL no widget " << name << std::endl; }
             };
         };
@@ -177,15 +193,26 @@ bool Shell::sweep_tick() {
                 else { ++m_sweep->fails; std::cout << "sweep FAIL no widget " << name << std::endl; }
             };
         };
-        auto written = [this](const std::string& file, const std::function<bool(const std::string&)>& ok) {
-            return [this, file, ok] {
+        // s31: the ODT is written on a worker; the sweep waits for it to land
+        // (the next step), then looks: the file there, no .part left beside it.
+        auto write_to = [this](const std::string& file) {
+            return [this, file] {
                 const std::string path = (fs::temp_directory_path() / ("optik_sweep_" + file)).string();
+                std::error_code ec;
+                fs::remove(path, ec);
                 m_export_take();
                 export_to(path);
+            };
+        };
+        auto on_disk = [this](const std::string& file, const std::function<bool(const std::string&)>& ok) {
+            return [this, file, ok] {
+                const std::string path = (fs::temp_directory_path() / ("optik_sweep_" + file)).string();
                 std::error_code ec;
-                if (!fs::exists(path, ec) || fs::file_size(path, ec) == 0 || !ok(path)) {
+                if (!fs::exists(path, ec) || fs::file_size(path, ec) == 0 || fs::exists(path + ".part", ec) || !ok(path)) {
                     ++m_sweep->fails;
-                    std::cout << "sweep FAIL export " << file << " not written as asked" << std::endl;
+                    std::cout << "sweep FAIL export " << file << " not written as asked (exists " << fs::exists(path, ec)
+                              << ", first " << m_export_opts.first << ", last " << m_export_opts.last
+                              << ", breaks " << int(m_export_opts.breaks) << ", pages " << m_book.pages().size() << ")" << std::endl;
                 }
                 fs::remove(path, ec);
             };
@@ -193,19 +220,23 @@ bool Shell::sweep_tick() {
         S.add("export: This Page", press("export.here"));
         S.add("export: heads kept", tick("export.heads"));
         S.add("export: breaks before headings", tick("export.breaks.headings"));
-        S.add("export: written (this page, .odt)", written("page.odt", [](const std::string&) { return true; }));
+        S.add("export: write (this page, .odt)", write_to("page.odt"));
+        S.add("export: written (this page, .odt)", on_disk("page.odt", [](const std::string&) { return true; }));
         S.add("export: again, All, breaks at pages", [this, press, tick] {
             activate_action("win.export");
             press("export.all")();
             tick("export.breaks.pages")();
         });
-        S.add("export: written (all, .txt, a form feed a page)", written("all.txt", [this](const std::string& p) {
-            std::ifstream f(p, std::ios::binary);
-            const std::string t((std::istreambuf_iterator<char>(f)), {});
-            int ff = 0;
-            for (char c : t) ff += c == '\f';
-            return m_export_opts.last == 0 && m_export_opts.first == 1 && ff > 0 &&
-                   ff < int(m_book.pages().size());
+        S.add("export: write (all, .odt, breaks at pages)", write_to("all.odt"));
+        S.add("export: written (all, .odt, breaks at pages)", on_disk("all.odt", [this](const std::string&) {
+            return m_export_opts.last == 0 && m_export_opts.first == 1 &&
+                   m_export_opts.breaks == core::ExportOptions::AtPages;
+        }));
+        // s31: ODT only -- a name asked as .txt is written as .odt beside it.
+        S.add("export: write (asked as .txt)", write_to("asked.txt"));
+        S.add("export: written as .odt, no .txt", on_disk("asked.txt.odt", [](const std::string& p) {
+            std::error_code ec;
+            return !fs::exists(p.substr(0, p.size() - 4), ec);
         }));
         // s30: the languages -- a second one ticked, the book's own unticked (the
         // second becomes the book's), the last refused, undone to the start.
@@ -481,6 +512,14 @@ void Shell::sweep_plan_page(int index) {
     v.push_back({pg + "condition: flip settings.deskew back", flip("settings.deskew")});
     v.push_back({pg + "condition: read with deskew on", act("win.read-page")});
     for (const char* a : {"win.undo", "win.undo", "win.redo", "win.redo"}) v.push_back({pg + "condition: " + a, act(a)});
+    // s32: dropcaps -- found or not on a read, rebuilt or stripped, undone.
+    v.push_back({pg + "dropcaps: flip settings.dropcaps", flip("settings.dropcaps")});
+    v.push_back({pg + "dropcaps: read with the pass off", act("win.read-page")});
+    v.push_back({pg + "dropcaps: flip settings.dropcaps back", flip("settings.dropcaps")});
+    v.push_back({pg + "dropcaps: read with the pass on", act("win.read-page")});
+    v.push_back({pg + "dropcaps: strip", flip("settings.dropcaps.rebuild")});
+    v.push_back({pg + "dropcaps: rebuild", flip("settings.dropcaps.rebuild")});
+    for (const char* a : {"win.undo", "win.undo", "win.redo", "win.redo"}) v.push_back({pg + "dropcaps: " + a, act(a)});
     v.push_back({pg + "About, opened and closed", [this] {
         activate_action("win.about");
         if (m_about) m_about->set_visible(false);

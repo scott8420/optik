@@ -5,6 +5,8 @@
 #include "core/Spell.hpp"
 #include "core/Export.hpp"
 #include "core/Languages.hpp"
+#include "core/ZipIntake.hpp"
+#include "RecutWindow.hpp"
 #include "model/Intake.hpp"
 
 #include <giomm/file.h>
@@ -26,7 +28,8 @@ void Shell::open_path(const std::string& path) {
     std::error_code ec;
     if (fs::exists(fs::path(path) / "book.json", ec)) open_book(path);
     else if (fs::is_directory(path, ec))             new_from_scans(path);
-    else say("Not a book or a folder: " + path);
+    else if (fs::is_regular_file(path, ec) && core::zipin::is_zip(path)) new_from_zip(path);   // s33
+    else say("Not a book, a folder of scans, or a zip of scans: " + path);
 }
 
 void Shell::on_open() {
@@ -112,25 +115,119 @@ void Shell::new_from_scans(const std::string& folder) {
     m_jobs.submit([this, paths, split, dest](ocr::Engine&) -> core::Jobs::Landing {
         auto plan = std::make_shared<core::ImportPlan>(core::plan_import(paths, split));
         auto copied = std::make_shared<std::vector<core::Scan>>(core::copy_scans(dest, plan->paths));
-        return [this, plan, copied, dest] {
-            batch_tick();   // first: the read that follows starts its own batch
-            if (!m_has_book || m_book.folder() != dest) return;
-            const std::size_t n = copied->size();
-            step("Import " + std::to_string(n) + " scans", [&](core::Edit& e) {
-                std::vector<core::Scan> scans;
-                for (const auto& s : *copied) scans.push_back(e.add_scan(s));
-                for (const auto& p : core::pages_for(*plan, scans))
-                    e.insert_page(e.book().pages().size(), p);
-            });
-            save();
-            std::string msg = std::to_string(n) + " scans, " + std::to_string(m_book.pages().size()) + " pages.";
-            if (!plan->unreadable.empty())
-                msg += "  " + std::to_string(plan->unreadable.size()) + " could not be read.";
-            say(msg);
-            go_to(0);
-            activate_action("win.read-all");
-        };
+        return import_landing(plan, copied, dest, "");
     });
+}
+
+// The import's landing, shared by a scans folder and a zip (s33).
+core::Jobs::Landing Shell::import_landing(std::shared_ptr<core::ImportPlan> plan,
+                                          std::shared_ptr<std::vector<core::Scan>> copied,
+                                          std::string dest, std::string note) {
+    return [this, plan, copied, dest, note] {
+        batch_tick();   // first: the read that follows starts its own batch
+        if (!m_has_book || m_book.folder() != dest) return;
+        const std::size_t n = copied->size();
+        step("Import " + std::to_string(n) + " scans", [&](core::Edit& e) {
+            std::vector<core::Scan> scans;
+            for (const auto& s : *copied) scans.push_back(e.add_scan(s));
+            for (const auto& p : core::pages_for(*plan, scans))
+                e.insert_page(e.book().pages().size(), p);
+        });
+        save();
+        std::string msg = std::to_string(n) + " scans, " + std::to_string(m_book.pages().size()) + " pages.";
+        if (!plan->unreadable.empty())
+            msg += "  " + std::to_string(plan->unreadable.size()) + " could not be read.";
+        if (!note.empty()) msg += "  " + note;
+        say(msg);
+        go_to(0);
+        activate_action("win.read-all");
+    };
+}
+
+// s33: scans that come as a zip (Librioteca's Author/Title/Archive.zip). The
+// book goes beside the zip, named for it -- or for its folder when the zip is
+// a generic "Archive.zip". The zip is only read: its scans are unpacked to a
+// scratch folder under ~/.cache/optik/intake, copied into the book like any
+// scans folder, and the scratch folder removed. All of it on the worker.
+void Shell::new_from_zip(const std::string& zip) {
+    const std::string book_dir = core::zipin::book_folder(zip);
+    std::error_code ec;
+    const bool had_book = fs::exists(fs::path(book_dir) / "book.json", ec);
+    if (had_book) {
+        open_book(book_dir);
+        if (!m_has_book) return;
+        if (!m_book.pages().empty()) { say("This zip already has a book; opened it."); return; }
+        // An import that never finished (cancelled, or Optik closed): go on with it.
+    }
+    const auto listing = core::zipin::list(zip);
+    if (!listing.ok()) { say(listing.explain()); return; }
+
+    if (!had_book) {
+        core::Book b;
+        const auto st = core::Book::create(book_dir, core::zipin::book_name(zip), b);
+        if (st != core::Status::Ok) { say(std::string("Could not make the book: ") + core::status_text(st)); return; }
+        open_book(book_dir);
+        if (!m_has_book) return;
+    }
+
+    const bool split = m_book.meta().settings.split_spreads;
+    const std::string dest = m_book.folder();
+    const std::string scratch = core::zipin::scratch_folder(core::zipin::book_name(zip));
+    m_import_stop = std::make_shared<std::atomic<bool>>(false);
+    auto stop = m_import_stop;
+    batch_begin("Unpacking " + std::to_string(listing.scans) + " scans from the zip", 1, true);
+    m_jobs.submit([this, zip, scratch, split, dest, stop](ocr::Engine&) -> core::Jobs::Landing {
+        const auto up = core::zipin::unpack(zip, scratch, {}, stop.get());
+        std::error_code rec;
+        if (up.cancelled) {
+            fs::remove_all(scratch, rec);
+            return [] {};
+        }
+        if (up.written == 0) {
+            fs::remove_all(scratch, rec);
+            const std::string why = up.error.empty() ? "nothing came out of the zip" : up.error;
+            return [this, why] { batch_tick(); say("Could not unpack the scans: " + why + "."); };
+        }
+        std::vector<std::string> paths;
+        for (const auto& f : model::intake::discover(scratch).scans) paths.push_back(f.path);
+        auto plan = std::make_shared<core::ImportPlan>(core::plan_import(paths, split));
+        auto copied = std::make_shared<std::vector<core::Scan>>(core::copy_scans(dest, plan->paths));
+        fs::remove_all(scratch, rec);
+        return import_landing(plan, copied, dest,
+                              up.error.empty() ? "" : "Some of the zip could not be read: " + up.error + ".");
+    });
+}
+
+// s33 (Scott: "a close project to an empty optik state"). Saves first if
+// anything changed, stops what is running, and leaves the window as a plain
+// start with no book would show it. The book stays on Recent Books.
+void Shell::close_book() {
+    if (!m_has_book) return;
+    m_text.commit_now();
+    if (m_journal.dirty()) save();
+    m_jobs.cancel();
+    if (m_export_stop) m_export_stop->store(true);
+    if (m_import_stop) m_import_stop->store(true);
+    m_batch_total = m_batch_done = 0;
+    if (m_export_win) m_export_win->set_visible(false);
+    if (m_recut) m_recut->set_visible(false);
+    if (m_pdlg) m_pdlg->set_visible(false);
+    const std::string title = m_book.meta().title;
+    m_book = core::Book{};
+    m_has_book = false;
+    m_journal.clear();
+    m_journal.mark();
+    m_pictures.clear();
+    m_picture_order.clear();
+    m_pictures_pending.clear();
+    m_thumbs_pending.clear();
+    m_page_id.clear();
+    m_word = {};
+    m_area = -1;
+    refresh_recent_menu();
+    refresh_all();
+    refresh_actions();
+    say("Closed " + title + ".");
 }
 
 bool Shell::save() {
@@ -331,7 +428,7 @@ void Shell::on_export() {
             m_export_take();
 
             auto dlg = Gtk::FileDialog::create();
-            dlg->set_title("Export the book (.odt for Writer, or .txt)");
+            dlg->set_title("Export the book (.odt, for Writer or Composix)");
             dlg->set_initial_folder(Gio::File::create_for_path(fs::path(m_book.folder()).parent_path().string()));
             dlg->set_initial_name(m_book.meta().title + ".odt");
             dlg->save(*this, [this, dlg](const Glib::RefPtr<Gio::AsyncResult>& r) {
@@ -349,22 +446,57 @@ void Shell::on_export() {
 void Shell::export_to(const std::string& where) {
     std::string path = where;
     const auto ext = fs::path(path).extension().string();
-    const auto blocks = core::flow(m_book, m_export_opts);
+    // The text is flowed here (the Book is the UI thread's; it is quick); the
+    // pictures and the page are cut from the scans on a worker (s31) -- the UI
+    // never waits. A cancel writes nothing: the file is written beside, as
+    // .part, and renamed only by a worker that was not stopped.
+    const auto blocks = std::make_shared<std::vector<core::Block>>(core::flow(m_book, m_export_opts));
     const core::PageSpan sp = core::span_of(m_book, m_export_opts);
-    std::string why;
-    bool ok;
-    if (ext == ".txt") {
-        ok = core::write_text(blocks, path, &why);
-    } else {
-        if (ext != ".odt") path += ".odt";
-        ok = core::write_odt(blocks, m_book.meta().title, path, &why);
-    }
     const bool whole = sp.from == 0 && sp.to + 1 == int(m_book.pages().size());
     const std::string pages = whole ? "" : sp.from == sp.to
         ? " (page " + std::to_string(sp.from + 1) + ")"
         : " (pages " + std::to_string(sp.from + 1) + "-" + std::to_string(sp.to + 1) + ")";
-    say(ok ? "Exported " + std::to_string(blocks.size()) + " paragraphs" + pages + " to " + path
-           : "Export failed: " + why);
+    const int paras = int(std::count_if(blocks->begin(), blocks->end(),
+                                        [](const core::Block& b) { return b.kind != core::Block::Picture; }));
+    if (ext != ".odt") path += ".odt";   // s31: ODT only (Writer and Composix)
+    const auto plan = std::make_shared<core::ExportPlan>(core::plan_of(m_book, *blocks));
+    if (m_export_stop) m_export_stop->store(true);   // a second export stops the first
+    auto stop = std::make_shared<std::atomic<bool>>(false);
+    m_export_stop = stop;
+    batch_begin("Exporting the book", 1, !plan->art.empty());
+    m_jobs.submit([this, blocks, plan, stop, path, paras, pages](ocr::Engine&) -> core::Jobs::Landing {
+        const auto book = core::realise(*plan, [stop] { return stop->load(); });
+        auto why = std::make_shared<std::string>();
+        const std::string part = path + ".part";
+        std::error_code ec;
+        bool ok = !stop->load() && core::write_odt(*blocks, book, part, why.get());
+        if (ok && stop->load()) ok = false;
+        if (ok) {
+            fs::rename(part, path, ec);
+            if (ec) { ok = false; *why = "could not write " + path + ": " + ec.message(); }
+        }
+        if (!ok) fs::remove(part, ec);
+        const bool cancelled = stop->load();
+        int pictures = 0;
+        for (const auto& a : book.art) if (!a.png.empty()) ++pictures;
+        const int asked = int(plan->art.size());
+        const bool sized = book.page.valid();
+        char trim[64] = "";
+        if (sized) std::snprintf(trim, sizeof trim, "%.2f x %.2f in", book.page.w / 72, book.page.h / 72);
+        const std::string trim_s = trim;
+        return [this, ok, cancelled, why, path, paras, pages, pictures, asked, sized, trim_s, stop] {
+            batch_tick();
+            if (m_export_stop == stop) m_export_stop.reset();
+            if (cancelled) return;
+            if (!ok) { say("Export failed: " + *why); return; }
+            std::string s = "Exported " + std::to_string(paras) + " paragraphs";
+            if (asked) s += ", " + std::to_string(pictures) + (pictures == 1 ? " picture" : " pictures") +
+                            (pictures < asked ? " (" + std::to_string(asked - pictures) + " could not be cut)" : "");
+            s += pages + " to " + path;
+            s += sized ? " -- the book's page, " + trim_s : " -- Writer's page (the scans don't say their resolution)";
+            say(s);
+        };
+    });
 }
 
 // -- the Book popover: FineReader's options, per book, each one a step ------------------
@@ -415,6 +547,13 @@ void Shell::build_settings_popover() {
     auto* heads2 = Gtk::make_managed<widgets::CheckButton>("settings.headings", "Mark headings (short, centred, space below) when reading");
     auto* quotes = Gtk::make_managed<widgets::CheckButton>("settings.quotes", "Mend quotes read as two marks (``Stop -> \u201CStop) when reading");
     auto* caps   = Gtk::make_managed<widgets::CheckButton>("settings.smallcaps", "Small caps: capital headings, check chapter openers when reading");
+    // Dropcaps (s32, milestone 24): found and spliced when reading; at export
+    // Rebuild (a Writer drop cap of the letters and lines the scan had) or
+    // Strip (the plain capital).
+    auto* dcaps  = Gtk::make_managed<widgets::CheckButton>("settings.dropcaps", "Dropcaps: find a chapter's large initial and put it back in its word when reading");
+    auto* dcrebuild = Gtk::make_managed<widgets::CheckButton>("settings.dropcaps.rebuild", "Dropcaps on export: rebuild the drop cap (off: strip to a plain capital)");
+    dcaps->set_tooltip_text("Takes effect on the next read of a page. The word the cap opens is marked to check");
+    dcrebuild->set_tooltip_text("Writer draws the drop cap as the scan had it (letters, lines deep); off, the paragraph opens with a plain capital");
     auto* ital  = Gtk::make_managed<widgets::CheckButton>("settings.italic", "Italic: measure the lean, check italic words when reading");
     auto* spell = Gtk::make_managed<widgets::CheckButton>("settings.spell", "Spelling: check words the dictionary does not know when reading");
     // Condition, phase 0 (s29): the page before the engine, and on the screen.
@@ -429,7 +568,7 @@ void Shell::build_settings_popover() {
     quotes->set_tooltip_text("Takes effect on the next read of a page");
     caps->set_tooltip_text("Takes effect on the next read of a page");
 
-    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, langs_scroll, langs_hint, thr_row, split, deskew, decol, level, heads, heads2, quotes, caps, ital, spell, join, hyph})
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{lang_row, langs_scroll, langs_hint, thr_row, split, deskew, decol, level, heads, heads2, quotes, caps, dcaps, ital, spell, join, hyph, dcrebuild})
         box->append(*w);
     m_settings_pop.set_child(*box);
     m_settings_pop.set_parent(m_title);   // ☰ -> Book Settings… points it at the title
@@ -450,6 +589,8 @@ void Shell::build_settings_popover() {
         quotes->set_active(s.mend_quotes);
         caps->set_active(s.small_caps);
         ital->set_active(s.mark_italic);
+        dcaps->set_active(s.find_dropcaps);
+        dcrebuild->set_active(s.rebuild_dropcaps);
         spell->set_active(s.check_spelling);
         deskew->set_active(s.deskew);
         decol->set_active(s.decolour);
@@ -555,6 +696,14 @@ void Shell::build_settings_popover() {
     ital->signal_toggled().connect([=] {
         const bool v = ital->get_active();
         change("Italic", [v](core::Settings& s) { s.mark_italic = v; });
+    });
+    dcaps->signal_toggled().connect([=] {
+        const bool v = dcaps->get_active();
+        change("Find dropcaps", [v](core::Settings& s) { s.find_dropcaps = v; });
+    });
+    dcrebuild->signal_toggled().connect([=] {
+        const bool v = dcrebuild->get_active();
+        change(v ? "Rebuild dropcaps" : "Strip dropcaps", [v](core::Settings& s) { s.rebuild_dropcaps = v; });
     });
     deskew->signal_toggled().connect([=] {
         const bool v = deskew->get_active();

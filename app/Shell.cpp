@@ -89,6 +89,7 @@ void Shell::build_header() {
     file_open->append("New from Scans…", "win.new");
     m_recent_menu = Gio::Menu::create();
     file_open->append_submenu("Recent Books", m_recent_menu);
+    file_open->append("Close Book", "win.close-book");                 // s33
     file->append_section(file_open);
     auto file_save = Gio::Menu::create();
     file_save->append("Save", "win.save");
@@ -249,6 +250,7 @@ void Shell::build_actions(App& app) {
     };
     add("open", [this] { on_open(); });
     add("new", [this] { on_new_from_scans(); });
+    add("close-book", [this] { close_book(); });                    // s33
     add("save", [this] { if (save()) say("Saved."); });
     add("save-as", [this] { on_save_as(); });
     add("about", [this] { on_about(); });
@@ -341,6 +343,7 @@ void Shell::build_actions(App& app) {
     app.set_accels_for_action("win.save", {"<Control>s"});
     app.set_accels_for_action("win.save-as", {"<Control><Shift>s"});
     app.set_accels_for_action("win.quit", {"<Control>q"});
+    app.set_accels_for_action("win.close-book", {"<Control>w"});    // s33
     app.set_accels_for_action("win.draw", {"<Control>d"});
     // Shown in the menu; on_key catches these first (capture) so they reach the
     // journal even from inside the text pane, and either path runs the same verb.
@@ -562,6 +565,7 @@ void Shell::refresh_actions() {
     const core::Page* p = current();
     const bool area = p && m_area >= 0 && m_area < int(p->areas.size());
     en("save", m_has_book);
+    en("close-book", m_has_book);
     en("export", m_has_book && !m_book.pages().empty());
     en("undo", m_journal.can_undo());
     en("redo", m_journal.can_redo());

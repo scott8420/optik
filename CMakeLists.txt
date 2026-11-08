@@ -33,7 +33,7 @@ if(OPTIK_SANITIZE)
 endif()
 
 # The build stamp the About line and the selftest print. Bumped per session.
-set(OPTIK_BUILD "s30")
+set(OPTIK_BUILD "s33")
 set(OPTIK_APP_ID "io.github.example.Optik")
 
 find_package(PkgConfig REQUIRED)
@@ -66,15 +66,18 @@ add_library(optik_core STATIC
     core/Jobs.cpp
     core/Reading.cpp
     core/Passes.cpp
+    core/Dropcaps.cpp
     core/Recent.cpp
     core/Audit.cpp
     core/PageOps.cpp
     core/Picture.cpp
     core/Export.cpp
+    core/ExportArt.cpp
     core/Spell.cpp
     core/Find.cpp
     core/Format.cpp
     core/Languages.cpp
+    core/ZipIntake.cpp
 )
 target_include_directories(optik_core PUBLIC . libs PRIVATE third_party)
 target_link_libraries(optik_core PUBLIC optik_image optik_ocr Threads::Threads
@@ -96,6 +99,9 @@ add_executable(optik_selftest
     tests/selftest_condition.cpp
     tests/selftest_export.cpp
     tests/selftest_languages.cpp
+    tests/selftest_composix.cpp
+    tests/selftest_dropcaps.cpp
+    tests/selftest_zip.cpp
 )
 target_include_directories(optik_selftest PRIVATE tests)
 target_link_libraries(optik_selftest PRIVATE optik_core PkgConfig::ZIP)   # s27: reads an ODT back
@@ -121,3 +127,18 @@ add_executable(optik ${APP_SOURCES} ${GRES_C})
 target_include_directories(optik PRIVATE app)
 target_link_libraries(optik PRIVATE optik_core PkgConfig::GTKMM spdlog::spdlog)
 target_compile_definitions(optik PRIVATE OPTIK_APP_ID="${OPTIK_APP_ID}")
+
+# -- install (s32: scripts/install.sh / uninstall.sh) ----------------------------
+# The app, its launcher and its icon. The launcher and the icon are named by the
+# app id, so GNOME ties the window to them (an app-id rename carries them along).
+# The selftest is not installed: it is the build's gate, not the user's tool.
+include(GNUInstallDirs)
+install(TARGETS optik RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+set(OPTIK_EXEC "${CMAKE_INSTALL_FULL_BINDIR}/optik")
+configure_file(resources/install/optik.desktop.in ${CMAKE_CURRENT_BINARY_DIR}/${OPTIK_APP_ID}.desktop @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${OPTIK_APP_ID}.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES resources/install/optik.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps RENAME ${OPTIK_APP_ID}.svg)
+install(FILES resources/icons/scalable/apps/optik-logo-symbolic.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/symbolic/apps RENAME ${OPTIK_APP_ID}-symbolic.svg)

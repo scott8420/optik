@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Optik
+GenericName=OCR Workbench
+Comment=Read scanned books into text you can proof and export
+Exec=@OPTIK_EXEC@ %F
+Icon=@OPTIK_APP_ID@
+Terminal=false
+Categories=Office;OCR;Scanning;GTK;
+Keywords=OCR;scan;book;Tesseract;text;
+StartupNotify=true

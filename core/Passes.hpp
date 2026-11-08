@@ -14,6 +14,7 @@
 
 #include "ocr/Layout.hpp"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -59,5 +60,19 @@ void mark_small_caps(std::vector<ocr::Area>& areas);
 // A word the author checked or edited is not touched either way.
 void mark_italic(std::vector<ocr::Para>& paras, bool on);
 void mark_italic(std::vector<ocr::Area>& areas, bool on);
+
+// Dropcaps (s32, core/Dropcaps.cpp). A chapter opener's large initial -- at the
+// left edge, two to four lines deep -- comes back from the engine as its own
+// area (a letter, or a picture), as a tall first word, or not at all (the lines
+// beside it indented, the paragraph often cut in two). Found by its shape, read
+// (`read`: one rectangle as one word, the engine's read_word), and spliced back
+// into the first word ("T" + "HE" -> "THE"), which is doubted; the paragraph
+// keeps the cap's letters and depth (Para::cap_letters / cap_lines) for export,
+// and a paragraph the engine cut beside the cap is one again. Only one to three
+// letters is a cap: a gap that reads as anything else is left alone. Runs first
+// after running heads, so headings and small caps see the whole first word.
+// Returns how many it found.
+using DropcapReader = std::function<bool(const ocr::Rect& where, ocr::Word& out)>;
+int mark_dropcaps(std::vector<ocr::Area>& areas, const DropcapReader& read);
 
 }  // namespace optik::core

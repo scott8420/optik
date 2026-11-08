@@ -6,6 +6,7 @@
 #include <tesseract/publictypes.h>
 #include <tesseract/resultiterator.h>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -286,6 +287,65 @@ bool Engine::read_area(const std::string& path, const Look& look, const Rect& ar
 
     GreyPage g;
     if (grey_of(pix.get(), g)) measure_italic(g.view, out);
+    return true;
+}
+
+bool Engine::read_word(const std::string& path, const Look& look, const Rect& where,
+                       Word& out, std::string* why) {
+    out = Word{};
+    if (!m->ready) { if (why) *why = "the engine has no language loaded"; return false; }
+    PixPtr pix = load_look(path, look, why, nullptr);
+    if (!pix) return false;
+    // Clamp to the page: a rectangle off its edge reads nothing.
+    const int W = int(pixGetWidth(pix.get())), H = int(pixGetHeight(pix.get()));
+    Rect r{std::max(where.x0, 0), std::max(where.y0, 0), std::min(where.x1, W), std::min(where.y1, H)};
+    if (r.empty()) return true;
+
+    // Ink first: a blank rectangle reads as nothing, not as the engine's guess
+    // at noise ('_', ':'). The rectangle is then the ink's own box, padded.
+    {
+        BOX* b = boxCreate(r.x0, r.y0, r.width(), r.height());
+        PixPtr grey(pixConvertTo8(pix.get(), 0));
+        PixPtr cut(grey ? pixClipRectangle(grey.get(), b, nullptr) : nullptr);
+        boxDestroy(&b);
+        PixPtr bw(cut ? pixThresholdToBinary(cut.get(), 128) : nullptr);
+        l_int32 n = 0;
+        if (bw) pixCountPixels(bw.get(), &n, nullptr);
+        if (n < 40) return true;
+        BOX* fg = nullptr;
+        if (pixClipToForeground(bw.get(), nullptr, &fg) == 0 && fg) {
+            l_int32 x, y, w, h;
+            boxGetGeometry(fg, &x, &y, &w, &h);
+            boxDestroy(&fg);
+            const int pad = std::max(8, h / 8);
+            r = Rect{std::max(r.x0 + x - pad, 0), std::max(r.y0 + y - pad, 0),
+                     std::min(r.x0 + x + w + pad, W), std::min(r.y0 + y + h + pad, H)};
+        }
+    }
+
+    auto& api = m->api;
+    api.SetPageSegMode(tesseract::PSM_SINGLE_WORD);
+    api.SetImage(pix.get());
+    api.SetRectangle(r.x0, r.y0, r.width(), r.height());
+    if (api.Recognize(nullptr) != 0) {
+        if (why) *why = "Tesseract could not read the rectangle";
+        api.Clear();
+        return false;
+    }
+    std::unique_ptr<tesseract::ResultIterator> ri(api.GetIterator());
+    if (ri) {
+        ri->Begin();
+        do {
+            if (ri->Empty(tesseract::RIL_WORD)) continue;
+            const std::string t = text_at(ri.get(), tesseract::RIL_WORD);
+            if (t.empty()) continue;
+            if (out.text.empty()) { out.box = box_at(ri.get(), tesseract::RIL_WORD); out.conf = ri->Confidence(tesseract::RIL_WORD); }
+            else { out.box = unite(out.box, box_at(ri.get(), tesseract::RIL_WORD));
+                   out.conf = std::min(out.conf, ri->Confidence(tesseract::RIL_WORD)); }
+            out.text += t;
+        } while (ri->Next(tesseract::RIL_WORD));
+    }
+    api.Clear();
     return true;
 }
 

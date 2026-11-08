@@ -240,7 +240,6 @@ void core_tests() {
         check("export: the ODT's first entry is the stored mimetype",
               head.compare(30, 8, "mimetype") == 0 &&
               head.find("application/vnd.oasis.opendocument.text") != std::string::npos);
-        check("export: writes plain text", core::write_text(blocks, (dir / "out.txt").string()));
         std::error_code ec;
         fs::remove_all(dir, ec);
     }

@@ -75,6 +75,11 @@ struct Line {
 struct Para {
     Rect              box;
     std::vector<Line> lines;
+    // A dropcap opens it (s32, core/Dropcaps): its letters, now at the head of
+    // the first word, and how many lines deep it stood. 0 = none. Export sets
+    // the drop-cap look from these (Settings::rebuild_dropcaps) or not.
+    int               cap_letters = 0;
+    int               cap_lines   = 0;
     bool operator==(const Para&) const = default;
 };
 

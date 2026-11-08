@@ -60,6 +60,13 @@ public:
     bool read_area(const std::string& image_path, const Look& look, const Rect& area,
                    std::vector<Para>& out, std::string* why = nullptr);
 
+    // One small rectangle (page space, through the look) read as ONE word (s32):
+    // a dropcap's letter(s), cut out beside the lines it stands by. `out` gets
+    // the word's text, its ink box and confidence; empty text when nothing
+    // reads there. False only when the engine or the page could not be had.
+    bool read_word(const std::string& image_path, const Look& look, const Rect& where,
+                   Word& out, std::string* why = nullptr);
+
     static std::string version();
 
 private:

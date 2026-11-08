@@ -103,6 +103,8 @@ void Shell::batch_tick() {
 
 void Shell::on_cancel() {
     m_jobs.cancel();
+    if (m_export_stop) m_export_stop->store(true);   // s31: an export writes nothing
+    if (m_import_stop) m_import_stop->store(true);   // s33: a zip stops unpacking
     const int done = m_batch_done, total = m_batch_total;
     m_batch_total = m_batch_done = 0;
     m_pictures_pending.clear();

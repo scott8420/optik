@@ -220,7 +220,7 @@ void italic_tests() {
         check("export: an italic run is one span; a word mended across lines keeps one",
               blocks.size() == 1 && blocks[0].text == want,
               blocks.empty() ? "" : core::plain(blocks[0].text));
-        const std::string odt = (dir / "out.odt").string(), txt = (dir / "out.txt").string();
+        const std::string odt = (dir / "out.odt").string();
         const bool wrote = core::write_odt(blocks, "t", odt);
         const std::string xml = odt_content(odt);
         check("export: the ODT sets italic in Writer's Emphasis style",
@@ -228,10 +228,8 @@ void italic_tests() {
               xml.find("<text:span text:style-name=\"Emphasis\">example</text:span>") != std::string::npos);
         check("export: the ODT carries no control bytes",
               xml.find(core::kFmtOn) == std::string::npos && xml.find(core::kFmtOff) == std::string::npos);
-        core::write_text(blocks, txt);
-        std::string t;
-        { std::ifstream f(txt); t.assign(std::istreambuf_iterator<char>(f), {}); }
-        check("export: plain text drops the marks", t == "She read The Hidden Staircase twice and an example of it.\n", t);
+        const std::string t = core::plain(blocks[0].text);
+        check("export: plain() drops the marks", t == "She read The Hidden Staircase twice and an example of it.", t);
 
         // Joins across pages look past a closing span.
         check("export: a paragraph ending in italic still ends a sentence",

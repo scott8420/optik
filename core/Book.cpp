@@ -73,7 +73,9 @@ json area_out(const ocr::Area& a) {
             for (const auto& w : l.words) words.push_back(word_out(w));
             lines.push_back({{"box", rect_out(l.box)}, {"words", words}});
         }
-        paras.push_back({{"box", rect_out(p.box)}, {"lines", lines}});
+        json jp = {{"box", rect_out(p.box)}, {"lines", lines}};
+        if (p.cap_letters > 0) jp["cap"] = {p.cap_letters, p.cap_lines};   // s32
+        paras.push_back(std::move(jp));
     }
     json j = {{"kind", ocr::kind_name(a.kind)}, {"box", rect_out(a.box)}, {"paras", paras}};
     if (a.user) j["user"] = true;
@@ -87,6 +89,10 @@ ocr::Area area_in(const json& j) {
     for (const auto& jp : j.at("paras")) {
         ocr::Para p;
         p.box = rect_in(jp.at("box"));
+        if (jp.contains("cap") && jp["cap"].is_array() && jp["cap"].size() == 2) {   // s32
+            p.cap_letters = std::clamp(jp["cap"][0].get<int>(), 0, 3);
+            p.cap_lines   = p.cap_letters ? std::clamp(jp["cap"][1].get<int>(), 1, 9) : 0;
+        }
         for (const auto& jl : jp.at("lines")) {
             ocr::Line l;
             l.box = rect_in(jl.at("box"));
@@ -114,7 +120,8 @@ json settings_out(const Settings& s) {
             {"mark_headings", s.mark_headings}, {"mend_quotes", s.mend_quotes},
             {"small_caps", s.small_caps}, {"mark_italic", s.mark_italic},
             {"check_spelling", s.check_spelling}, {"deskew", s.deskew},
-            {"decolour", s.decolour}, {"level", s.level}};
+            {"decolour", s.decolour}, {"level", s.level},
+            {"find_dropcaps", s.find_dropcaps}, {"rebuild_dropcaps", s.rebuild_dropcaps}};
 }
 Settings settings_in(const json& j) {
     Settings s;   // a key missing from an older file keeps its default
@@ -132,6 +139,8 @@ Settings settings_in(const json& j) {
     s.deskew             = j.value("deskew", s.deskew);        // s29
     s.decolour           = j.value("decolour", s.decolour);
     s.level              = j.value("level", s.level);
+    s.find_dropcaps      = j.value("find_dropcaps", s.find_dropcaps);        // s32
+    s.rebuild_dropcaps   = j.value("rebuild_dropcaps", s.rebuild_dropcaps);
     return s;
 }
 

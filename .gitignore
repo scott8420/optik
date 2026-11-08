@@ -2,6 +2,7 @@
 /build/
 build/
 build-asan/
+build-install/
 
 # CMake
 CMakeCache.txt
